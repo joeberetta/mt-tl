@@ -33,8 +33,7 @@ methods), and **handlers**.
   `createUpdatePublisher` (cross-process).
 - Errors that map to `rpc_error`: `BadRequestError`, `AuthRequiredError`,
   `NotFoundError`, `FloodWaitError`, `InternalError`.
-- Optional engine-managed update state (`updates.getState` / `getDifference`) and
-  schema-version migrations.
+- Schema-version migrations (per-layer ladders, applied on input/output).
 
 In-process by design: the engine and your handlers run in one process; scale by
 running more replicas behind a load balancer (shared state in Mongo + Redis).

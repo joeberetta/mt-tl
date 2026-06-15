@@ -32,10 +32,18 @@ export interface AuthSpec {
 }
 
 export interface UserSpec {
+    /** How to authenticate this user. OMIT for an ANONYMOUS session — it still
+     *  connects + handshakes, just unauthenticated (e.g. to test pre-auth calls). */
     auth?: AuthSpec
+    /** Negotiate this TL layer for THIS user (overrides `target.layer`) — so one
+     *  scenario can connect users on different layers. */
+    layer?: number
+    /** Override `initConnection` fields for this user (api_id, device_model, …). */
+    initConnection?: Record<string, unknown>
 }
 
-/** One scenario step: an `invoke` (with `expect`/`expectError`/`capture`) or an `expectUpdate`. */
+/** One scenario step: an `invoke`, an `expectUpdate`, or a `recipe` (a reusable
+ *  named macro that runs several calls). */
 export interface Step {
     /** Which user runs this step; defaults to the lone/`default` user. */
     as?: string
@@ -45,6 +53,11 @@ export interface Step {
     invoke?: string
     /** Call params (interpolated). */
     params?: Record<string, unknown>
+    /** Run a named recipe (from the `--recipes` module) — a reusable multi-step
+     *  macro on this user's session (e.g. `goOnline`, a login flow). */
+    recipe?: string
+    /** Args passed to the `recipe` (interpolated). */
+    with?: Record<string, unknown>
     /** Assert the rpc_result payload matches. */
     expect?: Matcher
     /** Assert the call fails with this rpc_error. */
@@ -81,9 +94,9 @@ export function validateScenario(raw: unknown, source = '<scenario>'): Scenario 
     s.steps.forEach((step, i) => {
         if (!step || typeof step !== 'object') throw new Error(`${source}: step ${i} must be a mapping`)
         const st = step as Step
-        const kinds = [st.invoke !== undefined, st.expectUpdate !== undefined]
+        const kinds = [st.invoke !== undefined, st.expectUpdate !== undefined, st.recipe !== undefined]
         if (kinds.filter(Boolean).length !== 1) {
-            throw new Error(`${source}: step ${i} must have exactly one of 'invoke' | 'expectUpdate'`)
+            throw new Error(`${source}: step ${i} must have exactly one of 'invoke' | 'expectUpdate' | 'recipe'`)
         }
     })
     return raw as Scenario

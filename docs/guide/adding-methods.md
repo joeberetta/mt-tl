@@ -169,16 +169,16 @@ ctx.pushToAuthKey(ctx.request.authKeyId, { _: 'someUpdate' /* … */ })
 // or cross-process: updates.pushToAuthKey(authKeyId, update)
 ```
 
-Auth-key pushes carry no `pts` (anonymous connections have no durable update state).
+Auth-key pushes are live-only — they reach that one connection if it's online, nothing more.
 
 ### Update state: `updates.getState` / `updates.getDifference`
 
-By default **your app owns** the update state: implement those two methods and
-embed `pts` in the updates you push. Set `config.updates.managed: true` to let the
-**engine own it instead** — it keeps a durable per-subject pts log (Mongo when
-`storage.backend: 'mongo'`, else in-memory), assigns `pts`, and answers
-`updates.getState` / `updates.getDifference` itself (common pts sequence; no qts /
-seq / channels). Managed mode requires the `updates.*` types in your schema.
+The framework delivers updates **live and best-effort** — it keeps no durable
+update state, so a client that was offline simply misses the push. If you need
+catch-up, **your app owns it**: implement `updates.getState` / `updates.getDifference`
+as normal methods, persist the updates you care about, and embed `pts` in what you
+push. Only your app knows which entities a client must resync (messages, chats,
+users, …), so it's the only place that can answer `getDifference` correctly.
 
 ## Structure: services vs controllers
 

@@ -1,24 +1,25 @@
-import type { RunReport } from './runner.js'
+import type { RunReport, StepReport } from './runner.js'
 
 export type ReportFormat = 'pretty' | 'json'
 
-/** Render a {@link RunReport} for the terminal (`pretty`) or machines (`json`). */
-export function formatReport(report: RunReport, format: ReportFormat = 'pretty'): string {
-    if (format === 'json') return JSON.stringify(report, null, 2)
+/** One step's line: `✓ [user] label  (Nms)` (+ an indented error if it failed).
+ *  Used for LIVE progress as each step completes, so the final output doesn't
+ *  re-list every step. */
+export function formatStep(s: StepReport): string {
+    const line = `${s.ok ? '✓' : '✗'} [${s.user}] ${s.label}  (${s.durationMs}ms)`
+    return !s.ok && s.error ? `${line}\n      ${s.error}` : line
+}
 
-    const lines: string[] = []
-    for (const s of report.steps) {
-        const mark = s.ok ? '✓' : '✗'
-        const time = `${s.durationMs}ms`
-        lines.push(`  ${mark} [${s.user}] ${s.label}  (${time})`)
-        if (!s.ok && s.error) lines.push(`      ${s.error}`)
-    }
+/** The closing summary line. */
+export function formatSummary(report: RunReport): string {
     const passed = report.steps.filter(s => s.ok).length
     const failed = report.steps.length - passed
-    lines.push('')
-    lines.push(
-        `  ${failed === 0 ? '✓' : '✗'} ${passed} passed, ${failed} failed ` +
-            `(${report.users.length} user${report.users.length === 1 ? '' : 's'}, ${report.durationMs}ms)`,
-    )
-    return lines.join('\n')
+    const users = `${report.users.length} user${report.users.length === 1 ? '' : 's'}`
+    return `${failed === 0 ? '✓' : '✗'} ${passed} passed, ${failed} failed  (${users}, ${report.durationMs}ms)`
+}
+
+/** Render a {@link RunReport}: `json` = the full structured report; `pretty` =
+ *  just the summary (steps are shown live as they run, so they aren't re-listed). */
+export function formatReport(report: RunReport, format: ReportFormat = 'pretty'): string {
+    return format === 'json' ? JSON.stringify(report, null, 2) : formatSummary(report)
 }

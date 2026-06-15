@@ -1,8 +1,8 @@
 {
     "name": "@mt-tl/testing",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "type": "module",
-    "description": "End-to-end test tooling for MTProto servers built on @mt-tl/server: an in-process server harness, a real handshaking client (auto-unwrapping invoke, expectUpdate), multi-user sessions, and a YAML scenario CLI (mtproto-test).",
+    "description": "End-to-end test tooling for MTProto servers built on @mt-tl/server: an in-process server harness, a real handshaking client (typed auto-unwrapping invoke, expectUpdate), multi-user sessions (per-user layer + anonymous), and a YAML scenario CLI (mtproto-test) with directory CI runs, schema autocomplete, linting, and type generation.",
     "license": "MIT",
     "author": "Joe Beretta",
     "repository": {
@@ -62,6 +62,7 @@
     "dependencies": {
         "@mt-tl/server": "workspace:*",
         "@mt-tl/tl": "workspace:*",
+        "ajv": "^8.17.1",
         "ws": "^8.18.0",
         "yaml": "^2.9.0"
     },

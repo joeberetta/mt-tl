@@ -2,12 +2,7 @@ import { schemaDir, layersDir } from 'demo-eos-seed-app/schema'
 import { protocolSchemaDir } from '@mt-tl/tl'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildReferenceApp } from './helpers/reference-app.js'
-import {
-    dispatchRpc,
-    InMemoryUpdateLog,
-    LoggingUpdateEmitter,
-    type UpdateEmitter,
-} from '../src/core/index.js'
+import { dispatchRpc, PublishingUpdateEmitter, type UpdateEmitter } from '../src/core/index.js'
 import { buildGateway, type Gateway } from '../src/gateway.js'
 import { InProcessForwarder } from '../src/dispatch/forwarders/in-process.js'
 import { InMemoryUpdateBus } from '../src/updates/update-bus.js'
@@ -27,7 +22,7 @@ let emitter: UpdateEmitter
 beforeAll(async () => {
     const bus = new InMemoryUpdateBus()
     const presence = new InMemoryPresence()
-    emitter = new LoggingUpdateEmitter(new InMemoryUpdateLog(), msg => bus.publishUpdate(msg))
+    emitter = new PublishingUpdateEmitter(msg => bus.publishUpdate(msg))
     const app = buildReferenceApp(emitter)
     const forwarder = new InProcessForwarder(req => dispatchRpc(app.rpc, req, app.deps))
     gateway = await buildGateway(

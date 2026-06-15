@@ -11,19 +11,12 @@ import { messageClass } from '../session/inbound-tracker.js'
 import type { RpcForwarder, RpcContext, SessionEffect } from './rpc-forwarder.js'
 import type { PresenceBinder } from '../updates/presence-binder.js'
 import { NoopPresenceBinder } from '../updates/presence-binder.js'
-import type { UpdateLog } from '../core/updates.js'
 import { noopLogger, type Logger } from '@mt-tl/tl'
 
 const ID_GZIP_PACKED = 0x3072cfa1
 const ID_MSG_CONTAINER = 0x73f1f8dc
 /** Spec cap: a container carries at most 1024 messages. */
 const CONTAINER_MAX_MESSAGES = 1024
-/** Managed `updates.getDifference`: max updates per response before slicing. */
-const DIFF_SLICE = 100
-/** Managed `updates.getDifference`: gap beyond which we force a full resync (differenceTooLong). */
-const DIFF_TOO_LONG = 5000
-/** Methods the engine answers itself when `updates.managed` (else forwarded to the app). */
-const MANAGED_UPDATES = new Set(['updates.getState', 'updates.getDifference'])
 
 /** Protocol/service predicates handled inside the gateway (never forwarded). */
 const SERVICE = new Set([
@@ -66,10 +59,6 @@ export interface DispatcherDeps {
     /** Disable inbound seqno validation for container-inner messages (mirrors the
      *  pipeline's `disableSeqNoCheck`); default enforced. */
     disableSeqNoCheck?: boolean
-    /** Durable pts log for protocol-managed `updates.getState`/`getDifference`. */
-    updateLog?: UpdateLog
-    /** When true (+ `updateLog`), answer getState/getDifference in-engine. */
-    managedUpdates?: boolean
     /** Whitelist of accepted `initConnection.api_id`s; omitted → any id is accepted. */
     allowedApiIds?: Iterable<number>
 }
@@ -79,7 +68,6 @@ export class Dispatcher {
     private readonly migrations: MigrationRegistry
     private readonly logger: Logger
     private readonly checkSeqNo: boolean
-    private readonly managedUpdates: boolean
     /** Built once from `deps.allowedApiIds`; undefined = whitelist disabled. */
     private readonly allowedApiIds?: ReadonlySet<number>
 
@@ -88,7 +76,6 @@ export class Dispatcher {
         this.migrations = deps.migrations ?? new MigrationRegistry()
         this.logger = deps.logger ?? noopLogger
         this.checkSeqNo = !deps.disableSeqNoCheck
-        this.managedUpdates = !!deps.managedUpdates && !!deps.updateLog
         this.allowedApiIds = deps.allowedApiIds ? new Set(deps.allowedApiIds) : undefined
     }
 
@@ -196,10 +183,6 @@ export class Dispatcher {
 
         if (SERVICE.has(name)) return this.handleService(body, ctx, conn)
 
-        if (this.managedUpdates && MANAGED_UPDATES.has(name)) {
-            return this.handleManagedUpdate(body, ctx, conn)
-        }
-
         return this.forwardBusiness(body, ctx, conn)
     }
 
@@ -244,59 +227,6 @@ export class Dispatcher {
             await this.deps.storage.authKeys.updateMeta(conn.ctx.authKeyId, meta)
         }
         return false
-    }
-
-    /**
-     * Engine-owned `updates.getState` / `updates.getDifference` (when
-     * `config.updates.managed`). Common pts sequence only — qts/seq/channels are 0.
-     * Updates are returned in `other_updates`; the durable {@link UpdateLog}
-     * supplies pts. Auth-gated like a normal `auth: true` method.
-     */
-    private async handleManagedUpdate(body: TlObject, ctx: MessageContext, conn: Connection): Promise<void> {
-        const log = this.deps.updateLog!
-        const subject = conn.ctx.subject
-        if (subject === undefined) return this.sendRpcError(conn, ctx.msgId, 401, 'AUTH_KEY_UNREGISTERED')
-        const date = Math.floor(Date.now() / 1000)
-        const state = (pts: number): JsonValue => ({
-            _: 'updates.state',
-            pts,
-            qts: 0,
-            date,
-            seq: 0,
-            unread_count: 0,
-        })
-
-        if (body._ === 'updates.getState') {
-            return this.sendRpcResult(conn, ctx.msgId, state(await log.currentPts(subject)))
-        }
-
-        // updates.getDifference
-        const sincePts = Number(body.pts ?? 0)
-        const current = await log.currentPts(subject)
-        if (sincePts >= current) {
-            return this.sendRpcResult(conn, ctx.msgId, { _: 'updates.differenceEmpty', date, seq: 0 })
-        }
-        if (current - sincePts > DIFF_TOO_LONG) {
-            return this.sendRpcResult(conn, ctx.msgId, { _: 'updates.differenceTooLong', pts: current })
-        }
-        const all = await log.since(subject, sincePts)
-        const sliced = all.length > DIFF_SLICE
-        const page = sliced ? all.slice(0, DIFF_SLICE) : all
-        const lastPts = page.at(-1)?.pts ?? current
-        const common = {
-            new_messages: [],
-            new_encrypted_messages: [],
-            other_updates: page.map(u => u.update),
-            chats: [],
-            users: [],
-        }
-        return this.sendRpcResult(
-            conn,
-            ctx.msgId,
-            sliced
-                ? { _: 'updates.differenceSlice', ...common, intermediate_state: state(lastPts) }
-                : { _: 'updates.difference', ...common, state: state(lastPts) },
-        )
     }
 
     private async handleService(body: TlObject, ctx: MessageContext, conn: Connection): Promise<void> {

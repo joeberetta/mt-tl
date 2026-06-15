@@ -56,7 +56,7 @@ afterAll(async () => {
 describe('@mt-tl/testing high-level API', () => {
     it('auto-unwraps invoke to the rpc_result payload', async () => {
         const alice = await server.connect()
-        const cfg = await alice.invoke<TlObject>('phone.getCallConfig')
+        const cfg = await alice.invoke('phone.getCallConfig')
         expect(cfg._).toBe('dataJSON')
         alice.close()
     })
@@ -64,13 +64,13 @@ describe('@mt-tl/testing high-level API', () => {
     it('negotiates the TL layer via invokeWithLayer(initConnection)', async () => {
         // No layer → the server's defaultLayer (204, set by createTestServer).
         const def = await server.connect()
-        expect((await def.invoke<TlObject>('phone.getCallConfig')).data).toBe('204')
+        expect((await def.invoke('phone.getCallConfig')).data).toBe('204')
         def.close()
 
         // Explicit layer → the handler sees ctx.layer == 185.
         const old = await server.connect({ layer: 185 })
         expect(old.negotiatedLayer).toBe(185)
-        expect((await old.invoke<TlObject>('phone.getCallConfig')).data).toBe('185')
+        expect((await old.invoke('phone.getCallConfig')).data).toBe('185')
         old.close()
     })
 

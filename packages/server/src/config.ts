@@ -89,15 +89,5 @@ export interface MTProtoConfig {
         redisUrl?: string
         /** Presence entry TTL in ms; the node refreshes it on a heartbeat. */
         presenceTtlMs: number
-        /**
-         * Who owns the update state (`pts` + `updates.getState`/`getDifference`).
-         * `false` (default) → your app owns it: handle those methods yourself and
-         * embed `pts` in the updates you push. `true` → the engine owns it: it keeps
-         * a durable per-user pts log (Mongo when `storage.backend: 'mongo'`, else
-         * in-memory) and answers `updates.getState`/`updates.getDifference` itself.
-         * Requires the `updates.*` types in your schema. Common-pts only — no qts,
-         * seq, or per-channel pts.
-         */
-        managed?: boolean
     }
 }

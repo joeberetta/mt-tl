@@ -10,7 +10,7 @@ import {
 import {
     RpcRegistry,
     dispatchRpc,
-    LoggingUpdateEmitter,
+    PublishingUpdateEmitter,
     type Hook,
     type HandlerCtx,
     type RpcMethodSpec,
@@ -126,10 +126,10 @@ export function createServer<RM = Record<string, RpcMethodSpec>>(
                 config,
                 migrations: opts.migrations,
                 logger,
-                createForward: (publish: UpdatePublish, updateLog) => {
-                    // Handler-emitted updates (ctx.push / ctx.updates) flow to the push loop,
-                    // logged (for pts) via the shared update log bootstrap provides.
-                    emitter = new LoggingUpdateEmitter(updateLog, publish)
+                createForward: (publish: UpdatePublish) => {
+                    // Handler-emitted updates (ctx.push) flow to the push loop for live,
+                    // best-effort delivery — no durable log.
+                    emitter = new PublishingUpdateEmitter(publish)
                     return req => dispatchRpc(registry, req, { updates: emitter, logger })
                 },
             })

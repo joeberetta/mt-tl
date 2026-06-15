@@ -1,16 +1,18 @@
 import type { TlObject } from '@mt-tl/tl'
-import { RpcError, type TestSession } from '../session.js'
+import { RpcError, type TestSession, type ConnectOpts } from '../session.js'
 import { Scope, getByPath, type Generators } from './scope.js'
 import { match, toUpdatePredicate, type Matcher } from './match.js'
+import { formatStep } from './report.js'
 import type { AuthSpec, Scenario, Step, TargetSpec } from './scenario.js'
 import type { RecipeMap } from './recipes.js'
 
 const DEFAULT_TIMEOUT_MS = 5000
 
 export interface RunOptions {
-    /** How to obtain a connected, handshaken session for a user. The CLI builds
-     *  this from `target`; tests pass an in-process `server.connect`. */
-    connect: (user: string) => Promise<TestSession>
+    /** How to obtain a connected, handshaken session for a user. `opts` carries
+     *  the user's per-user `layer`/`initConnection`. The CLI builds this from
+     *  `target`; tests pass an in-process `server.connect`. */
+    connect: (user: string, opts?: ConnectOpts) => Promise<TestSession>
     /** Auth recipes, by name (for `user.auth.recipe`). */
     recipes?: RecipeMap
     /** Custom `${...}` generators (e.g. `{ mnemonic: () => … }`). */
@@ -53,7 +55,8 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
     const getSession = async (user: string): Promise<TestSession> => {
         let s = sessions.get(user)
         if (!s) {
-            s = await opts.connect(user)
+            const spec = scenario.users?.[user]
+            s = await opts.connect(user, { layer: spec?.layer, initConnection: spec?.initConnection })
             sessions.set(user, s)
         }
         return s
@@ -61,7 +64,7 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
 
     const record = (r: StepReport): void => {
         reports.push(r)
-        opts.log?.(`${r.ok ? '✓' : '✗'} [${r.user}] ${r.label}${r.error ? ` — ${r.error}` : ''}`)
+        opts.log?.(formatStep(r))
     }
 
     try {
@@ -88,7 +91,7 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
                 continue
             }
             const session = await getSession(user)
-            record(await runStep(i, user, step, session, scope, scenario.target))
+            record(await runStep(i, user, step, session, scope, scenario.target, opts.recipes))
         }
     } finally {
         for (const s of sessions.values()) s.close()
@@ -137,7 +140,7 @@ async function runAuth(
         }
     }
     for (const step of auth.steps ?? []) {
-        record(await runStep(-1, user, step, session, scope, target))
+        record(await runStep(-1, user, step, session, scope, target, opts.recipes))
     }
 }
 
@@ -148,13 +151,18 @@ async function runStep(
     session: TestSession,
     scope: Scope,
     target: TargetSpec,
+    recipes?: RecipeMap,
 ): Promise<StepReport> {
     const started = Date.now()
     const label = step.label ?? labelOf(step)
     const timeoutMs = step.timeoutMs ?? target.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS
     const base = { index, user, label }
     try {
-        if (step.invoke !== undefined) {
+        if (step.recipe !== undefined) {
+            const recipe = recipes?.[step.recipe]
+            if (!recipe) throw new Error(`recipe '${step.recipe}' not found (pass --recipes)`)
+            await recipe({ session, user, args: scope.interpolate(step.with ?? {}) as Record<string, unknown>, scope })
+        } else if (step.invoke !== undefined) {
             const params = scope.interpolate(step.params ?? {}) as Record<string, unknown>
             if (step.expectError) {
                 await assertRpcError(
@@ -216,6 +224,7 @@ function applyCaptures(capture: Record<string, string> | undefined, source: TlOb
 }
 
 function labelOf(step: Step): string {
+    if (step.recipe !== undefined) return `recipe ${step.recipe}`
     if (step.invoke !== undefined) return `invoke ${step.invoke}`
     if (typeof step.expectUpdate === 'string') return `expectUpdate ${step.expectUpdate}`
     if (step.expectUpdate && typeof step.expectUpdate === 'object') {

@@ -5,8 +5,8 @@ import { schemaDir, layersDir } from 'demo-eos-seed-app/schema'
 import { stringify } from 'yaml'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { RpcMethodSpec } from '@mt-tl/server'
-import { createTestServer, type InvokeTrace } from '../src/index.js'
-import { runFromFiles, runScenario } from '../src/cli/index.js'
+import { createTestServer, type InvokeTrace, type ConnectOpts } from '../src/index.js'
+import { runFromFiles, runScenario, type RecipeMap } from '../src/cli/index.js'
 
 type AnyMethods = Record<string, RpcMethodSpec>
 
@@ -176,7 +176,7 @@ describe('mtproto-test CLI runner', () => {
     it('emits an InvokeTrace per call when onInvoke is set (--verbose)', async () => {
         const traces: InvokeTrace[] = []
         const s = await server.connect({ onInvoke: t => traces.push(t) })
-        const res = await s.invoke<{ _: string; data: string }>('crypto.sendCode', {
+        const res = await s.invoke('crypto.sendCode', {
             public_key: '',
             api_id: 9002,
             api_hash: 'echo-me',
@@ -198,5 +198,64 @@ describe('mtproto-test CLI runner', () => {
         await s.expectUpdate('updateShort')
         s.close()
         expect(pushes.some(u => u._ === 'updateShort')).toBe(true)
+    })
+
+    it('runs a `recipe` step (a reusable multi-call macro)', async () => {
+        let ran = 0
+        const recipes: RecipeMap = {
+            warmup: async ({ session }) => {
+                await session.invoke('crypto.sendCode', { public_key: '', api_id: 1, api_hash: 'a' })
+                await session.invoke('help.getServerConfig')
+                ran++
+            },
+        }
+        const report = await runScenario(
+            {
+                target: { url: server.url },
+                steps: [{ as: 'alice', recipe: 'warmup' }],
+            },
+            { connect: () => server.connect(), recipes },
+        )
+        expect(report.ok).toBe(true)
+        expect(ran).toBe(1)
+        expect(report.steps.find(s => s.label === 'recipe warmup')?.ok).toBe(true)
+    })
+
+    it('connects users on per-user layers and supports anonymous (no-auth) sessions', async () => {
+        const seen = new Map<string, ConnectOpts | undefined>()
+        const report = await runScenario(
+            {
+                target: { url: server.url, layer: 204 },
+                users: {
+                    // Explicit per-user layer (overrides target.layer=204).
+                    mira: {
+                        layer: 185,
+                        auth: {
+                            steps: [{ invoke: 'crypto.sendCode', params: { public_key: '', api_id: 1, api_hash: 'm' } }],
+                        },
+                    },
+                    // Anonymous: no `auth` → still connects + handshakes, just unauthenticated.
+                    nyx: {},
+                },
+                steps: [
+                    {
+                        as: 'nyx',
+                        invoke: 'crypto.sendCode', // an auth:false method an anonymous session can still call
+                        params: { public_key: '', api_id: 2, api_hash: 'n' },
+                        expect: { _: 'dataJSON' },
+                    },
+                ],
+            },
+            {
+                connect: (user, opts) => {
+                    seen.set(user, opts)
+                    return server.connect(opts)
+                },
+            },
+        )
+        expect(report.ok).toBe(true)
+        expect(seen.get('mira')?.layer).toBe(185) // per-user override applied
+        expect(seen.has('nyx')).toBe(true) // anonymous user still connected
+        expect(seen.get('nyx')?.layer).toBeUndefined() // …at the target/server default
     })
 })

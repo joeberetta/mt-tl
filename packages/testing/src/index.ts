@@ -14,6 +14,8 @@ export {
     type ExpectUpdateOpts,
     type ConnectOpts,
     type InvokeTrace,
+    type MethodSpec,
+    type AnyMethods,
 } from './session.js'
 export { createCodec } from './codec.js'
 

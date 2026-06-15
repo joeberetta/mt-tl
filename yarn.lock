@@ -3544,6 +3544,7 @@ __metadata:
     "@mt-tl/tl": "workspace:*"
     "@types/node": "npm:^20.14.0"
     "@types/ws": "npm:^8.5.12"
+    ajv: "npm:^8.17.1"
     demo-eos-seed-app: "workspace:*"
     tsx: "npm:^4.19.2"
     typescript: "npm:^5.6.3"
@@ -4992,7 +4993,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ajv@npm:^8.0.0, ajv@npm:^8.9.0":
+"ajv@npm:^8.0.0, ajv@npm:^8.17.1, ajv@npm:^8.9.0":
   version: 8.20.0
   resolution: "ajv@npm:8.20.0"
   dependencies:

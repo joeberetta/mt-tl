@@ -79,7 +79,6 @@ describe('server push — worker update reaches the authenticated client', () =>
                 update: { _: 'abstract.updateBalance', wallet_id: 'w-123' },
                 date: 1_700_000_000,
             },
-            pts: 1,
         })
 
         const pushed = await client.receive()

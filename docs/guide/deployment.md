@@ -101,7 +101,24 @@ load balancer.
 
 Server-push: a replica publishes an update onto the Redis bus; the replica(s)
 holding that user (per Redis presence) deliver it, rendered for each client's
-layer. Loss is fine — clients recover via a pts gap → `getDifference`.
+layer. Live push is best-effort — loss is fine, since catch-up is your app's
+`getDifference` (see [adding methods](adding-methods.md)).
+
+### Collections `@mt-tl/server` creates (Mongo)
+
+With `storage.backend: 'mongo'`, the server uses **three** collections in your
+`MONGO_DB`, created lazily with the indexes below. If your app shares the same
+database, steer clear of these names to avoid collisions:
+
+| Collection    | Holds                                                            | Secondary indexes                                    |
+| ------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
+| `authKeys`    | auth keys, the bound `subject`, device/app meta, blocked flag    | `subject`, `isBlocked`, `createdAt`                  |
+| `serverSalts` | per-auth-key rotating server-salt schedule                       | `{authKeyId, validSince}`, `{authKeyId, validUntil}` |
+| `sessions`    | live sessions (auth key, subject, layer, last activity)          | `authKeyId`, `subject`, `lastActivity`               |
+
+Presence + the update bus live in **Redis** (when `updates.redisUrl` is set), not
+Mongo. The server creates **no** other collections — there is no engine-owned
+update/pts log; durable update state is your app's, in collections you own.
 
 ### Graceful shutdown / draining
 
@@ -109,7 +126,7 @@ layer. Loss is fine — clients recover via a pts gap → `getDifference`.
   storage, and the update bus. In-flight per-connection work drains via the
   per-connection queue.
 - Presence entries for a drained replica expire by TTL; updates stop routing to it.
-  Clients reconnect to another replica and resync via `getDifference`.
+  Clients reconnect to another replica and resync via your app's `getDifference`.
 
 ### Behind a proxy (nginx / HAProxy)
 
@@ -128,8 +145,8 @@ and a PROXY header are spoofable by a client that reaches the server unfronted.
 
 ## Failure modes (by design)
 
-- **Redis down** → live updates are dropped; clients recover via pts `getDifference`
-  on reconnect. Live push is best-effort, never the source of truth.
+- **Redis down** → live updates are dropped; clients recover via your app's
+  `getDifference` on reconnect. Live push is best-effort, never the source of truth.
 - **Redis presence stale** (crashed replica) → entries expire by TTL; delivery to a
   dead replica simply finds no socket.
 - **Restart with `memory` storage** → all auth keys/sessions lost (clients

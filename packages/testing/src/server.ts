@@ -8,7 +8,7 @@ import {
 } from '@mt-tl/server'
 import type { TlCodec } from '@mt-tl/server/testkit'
 import { createCodec } from './codec.js'
-import { TestSession, type ConnectOpts } from './session.js'
+import { TestSession, type ConnectOpts, type MethodSpec, type AnyMethods } from './session.js'
 
 export interface TestServerOptions<RM> {
     /** The app's business `.tl` schema directory (protocol schema is auto-merged). */
@@ -36,8 +36,9 @@ export interface TestServer<RM> {
     /** A codec over protocol + business schema, for hand-built {@link TestSession}s. */
     codec: TlCodec
     /** Connect a fresh client: transport + handshake done, ready to `invoke`.
-     *  Pass `{ layer }` to negotiate a TL layer via `invokeWithLayer`. */
-    connect(opts?: ConnectOpts): Promise<TestSession>
+     *  Pass `{ layer }` to negotiate a TL layer via `invokeWithLayer`. Pass your
+     *  generated `RpcMethods` (`connect<RpcMethods>()`) for a typed `invoke`. */
+    connect<RM2 extends { [K in keyof RM2]: MethodSpec } = AnyMethods>(opts?: ConnectOpts): Promise<TestSession<RM2>>
     /** Shut the server down. */
     close(): Promise<void>
 }
@@ -81,7 +82,8 @@ export async function createTestServer<RM = Record<string, RpcMethodSpec>>(
         url,
         publicKey,
         codec,
-        connect: (opts?: ConnectOpts) => TestSession.open(url, publicKey, codec, opts),
+        connect: <RM2 extends { [K in keyof RM2]: MethodSpec } = AnyMethods>(opts?: ConnectOpts) =>
+            TestSession.open<RM2>(url, publicKey, codec, opts),
         close: () => app.close(),
     }
 }

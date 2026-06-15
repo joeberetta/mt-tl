@@ -54,7 +54,7 @@ describe('update routing — worker -> router -> node -> push', () => {
         registry.register('u-777', conn)
         await presence.add('u-777', 'nodeA')
 
-        await bus.publishUpdate({ subject: 'u-777', update: { _: 'updateShort', pts: 5 }, pts: 5 })
+        await bus.publishUpdate({ subject: 'u-777', update: { _: 'updateShort', pts: 5 } })
         await tick()
 
         expect(sent).toHaveLength(1)

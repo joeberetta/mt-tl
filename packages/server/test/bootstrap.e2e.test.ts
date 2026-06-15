@@ -2,12 +2,7 @@ import { schemaDir, layersDir } from 'demo-eos-seed-app/schema'
 import { protocolSchemaDir } from '@mt-tl/tl'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildReferenceApp } from './helpers/reference-app.js'
-import {
-    dispatchRpc,
-    InMemoryUpdateLog,
-    LoggingUpdateEmitter,
-    type UpdateEmitter,
-} from '../src/core/index.js'
+import { dispatchRpc, PublishingUpdateEmitter, type UpdateEmitter } from '../src/core/index.js'
 import { bootstrap } from '../src/bootstrap.js'
 import type { Gateway, MTProtoConfig } from '../src/lib.js'
 import { TlCodec } from '../src/tl/codec.js'
@@ -38,7 +33,7 @@ beforeAll(async () => {
         config,
         logger: undefined,
         createForward: publish => {
-            emitter = new LoggingUpdateEmitter(new InMemoryUpdateLog(), publish)
+            emitter = new PublishingUpdateEmitter(publish)
             app = buildReferenceApp(emitter)
             return req => dispatchRpc(app.rpc, req, app.deps)
         },

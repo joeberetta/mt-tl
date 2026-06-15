@@ -19,7 +19,6 @@ import { NodePresenceBinder, NoopPresenceBinder, type PresenceBinder } from './u
 import { PushService } from './updates/push.js'
 import type { Presence } from './updates/presence.js'
 import type { UpdateBus } from './updates/update-bus.js'
-import type { UpdateLog } from './core/updates.js'
 import type { MTProtoConfig } from './config.js'
 import { createLogger, type Logger } from '@mt-tl/tl'
 import type { MigrationRegistry } from '@mt-tl/tl'
@@ -53,10 +52,6 @@ export interface BuildOptions {
     bus?: UpdateBus
     /** Per-predicate migration ladders (input up / output down). */
     migrations?: MigrationRegistry
-    /** Durable pts log read by the engine to answer getState/getDifference when managed. */
-    updateLog?: UpdateLog
-    /** When true, the engine answers `updates.getState`/`getDifference` from `updateLog`. */
-    managedUpdates?: boolean
 }
 
 /**
@@ -125,8 +120,6 @@ export async function buildGateway(config: MTProtoConfig, opts: BuildOptions = {
         migrations,
         logger: logger.child({ scope: 'rpc' }),
         disableSeqNoCheck: config.disableSeqNoCheck,
-        updateLog: opts.updateLog,
-        managedUpdates: opts.managedUpdates,
         allowedApiIds: config.allowedApiIds,
     })
 

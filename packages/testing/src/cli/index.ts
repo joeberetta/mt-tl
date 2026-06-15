@@ -4,7 +4,9 @@
 
 export { runScenario, type RunOptions, type RunReport, type StepReport } from './runner.js'
 export { runFromFiles, type RunArgs } from './run.js'
-export { formatReport, type ReportFormat } from './report.js'
+export { formatReport, formatStep, formatSummary, type ReportFormat } from './report.js'
+export { generateScenarioSchema } from './schema.js'
+export { lintScenarios, collectScenarioFiles, type LintResult } from './lint.js'
 export {
     loadScenario,
     validateScenario,

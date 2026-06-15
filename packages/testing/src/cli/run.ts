@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createPublicKey } from 'node:crypto'
 import type { TlObject } from '@mt-tl/tl'
 import { createCodec } from '../codec.js'
-import { TestSession, type InvokeTrace } from '../session.js'
+import { TestSession, type InvokeTrace, type ConnectOpts } from '../session.js'
 import { wsTransport, tcpTransport } from '../client/transport.js'
 import { loadScenario, type TargetSpec } from './scenario.js'
 import { loadConfig, applyOverlay } from './config.js'
@@ -58,7 +58,7 @@ function buildConnect(
     baseDir: string,
     log: (line: string) => void,
     verbose: boolean,
-): (user: string) => Promise<TestSession> {
+): (user: string, userOpts?: ConnectOpts) => Promise<TestSession> {
     if (!target.url) throw new Error('target.url is required')
     if (!target.schema) throw new Error('target.schema is required')
     if (!target.publicKey)
@@ -71,10 +71,10 @@ function buildConnect(
     const publicKey = createPublicKey(readFileSync(resolveFrom(baseDir, target.publicKey)))
     const kind = target.transport ?? (target.url.startsWith('tcp:') ? 'tcp' : 'ws')
 
-    return (user: string) => {
-        const opts = {
-            layer: target.layer,
-            initConnection: target.initConnection,
+    return (user: string, userOpts?: ConnectOpts) => {
+        const opts: ConnectOpts = {
+            layer: userOpts?.layer ?? target.layer, // per-user layer overrides the target default
+            initConnection: { ...target.initConnection, ...userOpts?.initConnection },
             onInvoke: verbose ? (t: InvokeTrace) => log(traceLines(user, t)) : undefined,
             onUpdate: verbose ? (u: TlObject) => log(updateLines(user, u)) : undefined,
         }
@@ -124,6 +124,18 @@ function indent(s: string): string {
         .join('\n')
 }
 
+// Pretty JSON with bigints stringified and long strings (signatures, codes,
+// keys) elided — those dominate auth/crypto payloads and bury the structure.
 function pretty(v: unknown): string {
-    return JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x), 2) ?? String(v)
+    return (
+        JSON.stringify(
+            v,
+            (_k, x) => {
+                if (typeof x === 'bigint') return x.toString()
+                if (typeof x === 'string' && x.length > 80) return `${x.slice(0, 60)}… (${x.length} chars)`
+                return x
+            },
+            2,
+        ) ?? String(v)
+    )
 }

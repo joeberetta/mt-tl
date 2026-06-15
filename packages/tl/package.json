@@ -1,6 +1,6 @@
 {
     "name": "@mt-tl/tl",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "type": "module",
     "description": "TL (Type Language) tooling for MTProto: parser/IR, generic wire codec, value↔JSON, migrations, a TypeScript type generator, layer freezing, and the bundled MTProto protocol schema.",
     "license": "MIT",

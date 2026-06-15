@@ -47,7 +47,6 @@ export function loadConfig(): MTProtoConfig {
             enabled: process.env.UPDATES_ENABLED === 'true',
             redisUrl: process.env.REDIS_URL,
             presenceTtlMs: int('PRESENCE_TTL_MS', 60_000),
-            managed: process.env.UPDATES_MANAGED === 'true',
         },
     }
 }

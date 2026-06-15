@@ -49,6 +49,19 @@ export interface InvokeTrace {
     durationMs: number
 }
 
+/** One method's call-shape: its `params` and `result` types. Matches an entry of
+ *  the `RpcMethods` map that `@mt-tl/tl` generates (and `mtproto-test types`
+ *  writes), so `TestSession<RpcMethods>` gives a typed, autocompleted `invoke`. */
+export interface MethodSpec {
+    params?: unknown
+    result?: unknown
+}
+
+/** Default method map: any method name → free-form params, {@link TlObject} result.
+ *  This is what an UNtyped session uses, so `invoke('anything', {…})` stays valid
+ *  and returns a `TlObject`. Pass your generated `RpcMethods` for typed calls. */
+export type AnyMethods = Record<string, { params: Record<string, unknown>; result: TlObject }>
+
 /** A failed RPC: the server replied `rpc_error`. `code` is the MTProto error code. */
 export class RpcError extends Error {
     constructor(
@@ -122,8 +135,14 @@ const SERVICE_NAMES = new Set([
  * await alice.invoke('account.checkFields', { ... })       // throws RpcError on rpc_error
  * const upd = await alice.expectUpdate('updateShort')      // waits for a push
  * ```
+ *
+ * `RM` is your generated `RpcMethods` map (from `mtproto-test types`), making
+ * `invoke` typed + autocompleted. The constraint is a mapped type
+ * (`{ [K in keyof RM]: MethodSpec }`), NOT `Record<string, MethodSpec>` — the
+ * generated `RpcMethods` is an `interface` (no index signature) and so does not
+ * satisfy `Record<string, …>`; the mapped form accepts it. Don't "simplify" it.
  */
-export class TestSession {
+export class TestSession<RM extends { [K in keyof RM]: MethodSpec } = AnyMethods> {
     private readonly updates: TlObject[] = []
     private readonly updateWaiters: UpdateWaiter[] = []
     private readonly pending = new Map<string, Pending>()
@@ -146,23 +165,30 @@ export class TestSession {
         this.onUpdate = opts.onUpdate
     }
 
-    /** Connect a WebSocket transport, run the MTProto handshake, return a session. */
-    static open(url: string, publicKey: KeyObject, codec: TlCodec, opts?: ConnectOpts): Promise<TestSession> {
-        return TestSession.fromTransport(wsTransport(url), publicKey, codec, opts)
+    /** Connect a WebSocket transport, run the MTProto handshake, return a session.
+     *  Pass your generated `RpcMethods` (`TestSession.open<RpcMethods>(…)`) for a
+     *  typed, autocompleted `invoke`. */
+    static open<RM extends { [K in keyof RM]: MethodSpec } = AnyMethods>(
+        url: string,
+        publicKey: KeyObject,
+        codec: TlCodec,
+        opts?: ConnectOpts,
+    ): Promise<TestSession<RM>> {
+        return TestSession.fromTransport<RM>(wsTransport(url), publicKey, codec, opts)
     }
 
     /** Connect over any {@link ClientTransport} (e.g. raw TCP), handshake, return a
      *  session. Use this for stands that aren't plain WebSocket. */
-    static async fromTransport(
+    static async fromTransport<RM extends { [K in keyof RM]: MethodSpec } = AnyMethods>(
         transport: ClientTransport,
         publicKey: KeyObject,
         codec: TlCodec,
         opts?: ConnectOpts,
-    ): Promise<TestSession> {
+    ): Promise<TestSession<RM>> {
         const client = new TestClient(transport, publicKey, codec)
         await client.connect()
         await client.handshake()
-        return new TestSession(client, opts)
+        return new TestSession<RM>(client, opts)
     }
 
     /** The TL layer this session negotiated (via {@link ConnectOpts.layer}), or
@@ -177,16 +203,18 @@ export class TestSession {
      * interleaved updates are queued for {@link expectUpdate}. Throws
      * {@link RpcError} if the server answers `rpc_error`.
      */
-    invoke<T = TlObject>(
-        method: string,
-        params: Record<string, unknown> = {},
+    invoke<M extends keyof RM & string>(
+        method: M,
+        params?: RM[M]['params'],
         opts: InvokeOpts = {},
-    ): Promise<T> {
-        if (!this.onInvoke) return this.invokeInner<T>(method, params, opts)
+    ): Promise<RM[M]['result']> {
+        const p = (params ?? {}) as Record<string, unknown>
+        type R = RM[M]['result']
+        if (!this.onInvoke) return this.invokeInner<R>(method, p, opts)
         const started = Date.now()
-        return this.invokeInner<T>(method, params, opts).then(
+        return this.invokeInner<R>(method, p, opts).then(
             result => {
-                this.onInvoke!({ method, params, result, durationMs: Date.now() - started })
+                this.onInvoke!({ method, params: p, result, durationMs: Date.now() - started })
                 return result
             },
             err => {
@@ -194,7 +222,7 @@ export class TestSession {
                     err instanceof RpcError
                         ? { code: err.code, message: err.message }
                         : { code: 0, message: String(err?.message ?? err) }
-                this.onInvoke!({ method, params, error, durationMs: Date.now() - started })
+                this.onInvoke!({ method, params: p, error, durationMs: Date.now() - started })
                 throw err
             },
         )

@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import type { TlDef, TlParam } from './ir.js'
 import { parseType } from './ir.js'
 import { getTlObjectCrc32 } from './crc32.js'
@@ -109,12 +109,17 @@ function parseCoreLines(): TlDef[] {
 }
 
 /**
- * Loads every `*.tl` file from a directory into the IR. `scheme_0_protocol.tl`
- * is flagged as protocol; the manually-parsed MTProto core constructors are
- * merged in. Duplicate constructor ids are de-duplicated (first wins).
+ * Loads `*.tl` into the IR. Accepts a **directory** (every `*.tl` in it) or a
+ * single **`.tl` file** — the latter is handy for a frozen per-layer snapshot
+ * (`scheme_203.tl`) you want to parse in isolation, without a folder per layer.
+ * `scheme_0_protocol.tl` is flagged as protocol; the manually-parsed MTProto core
+ * constructors are merged in. Duplicate constructor ids are de-duplicated (first
+ * wins).
  */
-export function parseSchemaDir(dir: string): ParseResult {
-    const files = readdirSync(dir)
+export function parseSchemaDir(dirOrFile: string): ParseResult {
+    const isFile = statSync(dirOrFile).isFile()
+    const dir = isFile ? dirname(dirOrFile) : dirOrFile
+    const files = (isFile ? [basename(dirOrFile)] : readdirSync(dirOrFile))
         .filter(f => f.endsWith('.tl'))
         .sort()
 

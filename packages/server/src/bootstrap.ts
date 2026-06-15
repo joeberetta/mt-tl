@@ -4,9 +4,7 @@ import { InMemoryUpdateBus, type UpdateBus } from './updates/update-bus.js'
 import { InMemoryPresence, type Presence } from './updates/presence.js'
 import { createRedisPresence } from './updates/redis-presence.js'
 import { createRedisUpdateBus } from './updates/redis-bus.js'
-import { createMongoUpdateLog } from './updates/mongo-update-log.js'
 import { UpdateRouter } from './updates/router.js'
-import { InMemoryUpdateLog, type UpdateLog } from './core/updates.js'
 import { createLogger, type Logger } from '@mt-tl/tl'
 import type { MTProtoConfig } from './config.js'
 import type { RpcRequest, RpcResponse } from './dispatch/rpc-forwarder.js'
@@ -23,12 +21,11 @@ export interface BootstrapOptions {
     config: MTProtoConfig
     /**
      * Builds the app's forward handler. Receives a `publish` wired to the
-     * gateway's in-process push loop and the shared {@link UpdateLog} (durable
-     * when `config.updates.managed`) — feed both into the app's update emitter
-     * (`new LoggingUpdateEmitter(updateLog, publish)`) so handler-emitted updates
-     * reach connected clients and, when managed, persist with a pts.
+     * gateway's in-process push loop — feed it into the app's update emitter
+     * (`new PublishingUpdateEmitter(publish)`) so handler-emitted updates reach
+     * connected clients (live, best-effort).
      */
-    createForward: (publish: UpdatePublish, updateLog: UpdateLog) => ForwardHandler
+    createForward: (publish: UpdatePublish) => ForwardHandler
     logger?: Logger
     /** Per-predicate migration ladders (input `up` / output `down`). */
     migrations?: MigrationRegistry
@@ -62,13 +59,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<Gateway> {
         })
     }
 
-    // Update state (pts log). Durable + engine-answered when `updates.managed`.
-    const updateLog = await makeUpdateLog(opts.config)
-    closers.push(updateLog.close)
-    buildOpts.updateLog = updateLog.log
-    buildOpts.managedUpdates = !!opts.config.updates.managed
-
-    buildOpts.forwarder = new InProcessForwarder(opts.createForward(publish, updateLog.log))
+    buildOpts.forwarder = new InProcessForwarder(opts.createForward(publish))
     const gateway = await buildGateway(opts.config, buildOpts)
 
     // Extend close() to also tear down the in-process update infra.
@@ -96,19 +87,4 @@ async function makeBus(config: MTProtoConfig): Promise<{ bus: UpdateBus; close: 
         return { bus, close: () => bus.close() }
     }
     return createRedisUpdateBus(u.redisUrl)
-}
-
-/**
- * The pts log behind `ctx.push` and (when `updates.managed`) `updates.getState`/
- * `getDifference`. Durable on Mongo when managed + `storage.backend: 'mongo'`;
- * in-memory otherwise (the emitter still uses it to stamp a pts).
- */
-async function makeUpdateLog(config: MTProtoConfig): Promise<{ log: UpdateLog; close: () => Promise<void> }> {
-    if (config.updates.managed && config.storage.backend === 'mongo') {
-        if (!config.storage.mongoUrl || !config.storage.mongoDb) {
-            throw new Error('updates.managed with mongo storage requires MONGO_URL and MONGO_DB')
-        }
-        return createMongoUpdateLog(config.storage.mongoUrl, config.storage.mongoDb)
-    }
-    return { log: new InMemoryUpdateLog(), close: async () => {} }
 }

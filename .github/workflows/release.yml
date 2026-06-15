@@ -1,32 +1,51 @@
 name: Publish packages to npm
 
-# Publishes the public workspaces when you push a version tag, e.g.:
-#   (bump versions in packages/*/package.json) → git tag v0.1.0 → git push --tags
-# One-time setup: add an npm automation token as the `NPM_TOKEN` repo secret.
+# Publishes the public workspaces (@mt-tl/tl, @mt-tl/server, @mt-tl/testing) when
+# you push a version tag, e.g.:
+#   bump versions in packages/*/package.json → git tag v0.1.2 → git push --tags
+# Or run it by hand from the Actions tab (workflow_dispatch).
+#
+# ONE-TIME SETUP (required): create an npm token with publish rights to the
+# @mt-tl scope and add it as the repo secret `NPM_TOKEN`
+# (Settings → Secrets and variables → Actions → New repository secret).
 on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
+    push:
+        tags: ['v*']
+    workflow_dispatch:
 
 permissions:
-  contents: read
-  id-token: write # npm provenance via OIDC (public repo)
+    contents: read
+    id-token: write # npm provenance via OIDC (public repo)
+
+# One publish at a time; let an in-progress release finish (never cancel a publish).
+concurrency:
+    group: npm-publish
+    cancel-in-progress: false
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      # The repo pins yarn@4 via package.json "packageManager"; corepack honours it.
-      - run: corepack enable
-      - run: yarn install --immutable
-      # Publishes in topological order (tl → server → testing), skips the private
-      # demo app, and rewrites workspace:* deps to real versions. prepack builds
-      # each package's dist/ first. --tolerate-republish makes re-runs idempotent.
-      - run: yarn workspaces foreach -A --topological-dev --no-private npm publish --tolerate-republish --access public
-        env:
-          YARN_NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          YARN_NPM_PUBLISH_PROVENANCE: 'true'
+    publish:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+            # The repo pins yarn@4 via package.json "packageManager"; corepack honours it.
+            - run: corepack enable
+            - run: yarn install --immutable
+
+            # Gate: never publish a tag that doesn't typecheck or whose tests fail.
+            - run: yarn typecheck
+            - run: yarn test
+
+            # Publish in topological order by PRODUCTION deps (tl → server → testing),
+            # skipping the private demo app + website, rewriting workspace:* deps to real
+            # versions. NB: --topological (not --topological-dev) — server devDepends on
+            # testing while testing depends on server, so including dev edges would be a
+            # cycle. Each package's `prepack` builds its dist/ first. Per-package version
+            # comes from package.json (independent of the tag name); --tolerate-republish
+            # skips any version already on npm, so re-running a tag is safe.
+            # --provenance is the explicit, documented flag (build attestation via the
+            # OIDC id-token above); it does NOT authenticate — publishing still needs
+            # the NPM_TOKEN below (Yarn has no tokenless/trusted-publishing path).
+            - run: yarn workspaces foreach -A --topological --no-private npm publish --tolerate-republish --access public --provenance
