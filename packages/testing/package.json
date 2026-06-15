@@ -1,0 +1,76 @@
+{
+    "name": "@mt-tl/testing",
+    "version": "0.1.1",
+    "type": "module",
+    "description": "End-to-end test tooling for MTProto servers built on @mt-tl/server: an in-process server harness, a real handshaking client (auto-unwrapping invoke, expectUpdate), multi-user sessions, and a YAML scenario CLI (mtproto-test).",
+    "license": "MIT",
+    "author": "Joe Beretta",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/joeberetta/mt-tl.git",
+        "directory": "packages/testing"
+    },
+    "homepage": "https://github.com/joeberetta/mt-tl/tree/master/packages/testing#readme",
+    "bugs": "https://github.com/joeberetta/mt-tl/issues",
+    "keywords": [
+        "mtproto",
+        "telegram",
+        "testing",
+        "e2e",
+        "test-client",
+        "qa",
+        "yaml"
+    ],
+    "engines": {
+        "node": ">=20"
+    },
+    "exports": {
+        ".": "./src/index.ts",
+        "./cli": "./src/cli/index.ts"
+    },
+    "files": [
+        "dist",
+        "src"
+    ],
+    "scripts": {
+        "build": "rm -rf dist && tsc -p tsconfig.build.json",
+        "clean": "rm -rf dist",
+        "prepack": "yarn run build",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run --passWithNoTests",
+        "mtproto-test": "tsx src/cli/bin.ts"
+    },
+    "publishConfig": {
+        "access": "public",
+        "exports": {
+            ".": {
+                "types": "./dist/index.d.ts",
+                "import": "./dist/index.js"
+            },
+            "./cli": {
+                "types": "./dist/cli/index.d.ts",
+                "import": "./dist/cli/index.js"
+            }
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.js",
+        "types": "./dist/index.d.ts",
+        "bin": {
+            "mtproto-test": "./dist/cli/bin.js"
+        }
+    },
+    "dependencies": {
+        "@mt-tl/server": "workspace:*",
+        "@mt-tl/tl": "workspace:*",
+        "ws": "^8.18.0",
+        "yaml": "^2.9.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.0",
+        "@types/ws": "^8.5.12",
+        "demo-eos-seed-app": "workspace:*",
+        "tsx": "^4.19.2",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.8"
+    }
+}

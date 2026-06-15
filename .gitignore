@@ -1,0 +1,33 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Build output
+.docusaurus/
+build/
+*.tsbuildinfo
+
+# Stray tsc output emitted next to TS sources. Real builds go to dist/ (see each
+# package's tsconfig.build.json); a bare `tsc` honours sourceMap:true and dumps
+# .js/.js.map in place — keep those out of the tree.
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/test/**/*.js
+packages/*/test/**/*.js.map
+
+# Local / scratch
+.debug/
+.DS_Store
+*.tgz
+
+# Claude Code — keep shared launch.json, ignore per-user local settings
+.claude/settings.local.json
+
+# Yarn (zero-install not used; node-modules linker)
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.pnp.*

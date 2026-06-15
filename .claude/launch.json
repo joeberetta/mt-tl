@@ -1,0 +1,12 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "serve (mtproto server + demo app, in-process)",
+            "runtimeExecutable": "yarn",
+            "runtimeArgs": ["workspace", "demo-eos-seed-app", "run", "serve"],
+            "port": 8081,
+            "autoPort": false
+        }
+    ]
+}

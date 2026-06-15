@@ -1,0 +1,75 @@
+{
+    "name": "@mt-tl/server",
+    "version": "0.1.1",
+    "type": "module",
+    "description": "An MTProto 2.0 server framework (Fastify-style): createServer, routes, plugins, hooks, server-push. Ships the full protocol engine — WebSocket/raw-TCP transport, handshake, AES-IGE crypto, sessions, TL (de)serialization, layered encoding — plus the handler layer, in one install.",
+    "license": "MIT",
+    "author": "Joe Beretta",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/joeberetta/mt-tl.git",
+        "directory": "packages/server"
+    },
+    "homepage": "https://github.com/joeberetta/mt-tl/tree/master/packages/server#readme",
+    "bugs": "https://github.com/joeberetta/mt-tl/issues",
+    "keywords": [
+        "mtproto",
+        "telegram",
+        "server",
+        "framework",
+        "websocket",
+        "tcp",
+        "protocol",
+        "tl"
+    ],
+    "engines": {
+        "node": ">=20"
+    },
+    "exports": {
+        ".": "./src/index.ts",
+        "./testkit": "./src/testkit.ts"
+    },
+    "files": [
+        "dist",
+        "src"
+    ],
+    "scripts": {
+        "build": "rm -rf dist && tsc -p tsconfig.build.json",
+        "clean": "rm -rf dist",
+        "prepack": "yarn run build",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run"
+    },
+    "publishConfig": {
+        "access": "public",
+        "exports": {
+            ".": {
+                "types": "./dist/index.d.ts",
+                "import": "./dist/index.js"
+            },
+            "./testkit": {
+                "types": "./dist/testkit.d.ts",
+                "import": "./dist/testkit.js"
+            }
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+    },
+    "dependencies": {
+        "@mt-tl/tl": "workspace:*",
+        "crc-32": "^1.2.2",
+        "ioredis": "^5.4.1",
+        "mongodb": "^6.12.0",
+        "ws": "^8.18.0"
+    },
+    "devDependencies": {
+        "@mt-tl/testing": "workspace:*",
+        "@types/node": "^20.14.0",
+        "@types/ws": "^8.5.12",
+        "demo-eos-seed-app": "workspace:*",
+        "tsx": "^4.19.2",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.8"
+    }
+}

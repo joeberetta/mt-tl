@@ -1,0 +1,32 @@
+{
+    "name": "demo-eos-seed-app",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./schema": "./src/schema.ts"
+    },
+    "scripts": {
+        "serve": "tsx src/main.ts",
+        "gen:types": "tsx scripts/gen-types.ts",
+        "freeze": "tsx scripts/freeze.ts",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "mtproto-test": "mtproto-test"
+    },
+    "dependencies": {
+        "@mt-tl/server": "workspace:*",
+        "@mt-tl/tl": "workspace:*",
+        "eosjs-ecc": "^4.0.7",
+        "mongodb": "^6.12.0"
+    },
+    "devDependencies": {
+        "@mt-tl/testing": "workspace:*",
+        "@types/node": "^20.14.0",
+        "prettier": "^3.3.3",
+        "tsx": "^4.19.2",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.8"
+    }
+}

@@ -1,0 +1,30 @@
+{
+    "name": "mt-tl",
+    "version": "0.1.0",
+    "packageManager": "yarn@4.12.0",
+    "workspaces": [
+        "packages/*",
+        "examples/*",
+        "website"
+    ],
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "test": "yarn workspace @mt-tl/tl run test && yarn workspace @mt-tl/server run test && yarn workspace @mt-tl/testing run test && yarn workspace demo-eos-seed-app run test",
+        "typecheck": "yarn workspace @mt-tl/tl run typecheck && yarn workspace @mt-tl/server run typecheck && yarn workspace @mt-tl/testing run typecheck && yarn workspace demo-eos-seed-app run typecheck",
+        "build": "yarn workspace @mt-tl/tl run build && yarn workspace @mt-tl/server run build && yarn workspace @mt-tl/testing run build",
+        "freeze": "yarn workspace demo-eos-seed-app run freeze",
+        "gen:types": "yarn workspace demo-eos-seed-app run gen:types",
+        "docs": "yarn workspace mt-tl-docs start",
+        "docs:build": "yarn workspace mt-tl-docs build",
+        "format": "prettier --write ."
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.0",
+        "prettier": "^3.3.3",
+        "tsx": "^4.19.2",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.8"
+    }
+}

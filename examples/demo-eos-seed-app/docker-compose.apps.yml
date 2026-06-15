@@ -1,0 +1,39 @@
+# Containerized app (prod-like), layered on top of the infra in
+# docker-compose.yml. Run both files together:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.apps.yml up -d --build
+#
+# Apps reach infra by service name on the compose network (mongo:27017,
+# redis:6379 — the INTERNAL ports, not the remapped host ones).
+# Scale out:  docker compose ... up -d --scale app=4   (state is shared in Mongo/Redis)
+services:
+    app:
+        build: { context: ../.., dockerfile: examples/demo-eos-seed-app/Dockerfile }
+        restart: unless-stopped
+        # In-process: gateway + handlers in one process (the image default).
+        command: ['yarn', 'workspace', 'demo-eos-seed-app', 'run', 'serve']
+        depends_on:
+            mongo: { condition: service_healthy }
+            redis: { condition: service_healthy }
+        ports:
+            - '8081:8081' # WebSocket
+            - '8082:8082' # raw TCP
+        environment:
+            NODE_ID: app-1
+            MTPROTO_WS_PORT: '8081'
+            MTPROTO_TCP_PORT: '8082'
+            DEFAULT_LAYER: '204'
+            STORAGE_BACKEND: mongo
+            MONGO_URL: mongodb://mongo:27017
+            MONGO_DB: mtproto
+            REDIS_URL: redis://redis:6379
+            CHAT_SERVER_SEED: ${CHAT_SERVER_SEED:?set CHAT_SERVER_SEED in your environment}
+            CONFIG_DC_IP: ${CONFIG_DC_IP:-127.0.0.1}
+            CONFIG_DC_PORT: '8081'
+            # Server-push across instances (optional): shared Redis bus.
+            UPDATES_ENABLED: 'true'
+            LOG_FORMAT: json
+            # Mount and point at the production PEM for real clients (see deployment.md):
+            # RSA_PRIVATE_KEY_PATH: /run/secrets/mtproto_rsa.pem
+        # volumes:
+        #   - ./secrets/mtproto_rsa.pem:/run/secrets/mtproto_rsa.pem:ro

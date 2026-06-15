@@ -1,0 +1,32 @@
+name: Publish packages to npm
+
+# Publishes the public workspaces when you push a version tag, e.g.:
+#   (bump versions in packages/*/package.json) → git tag v0.1.0 → git push --tags
+# One-time setup: add an npm automation token as the `NPM_TOKEN` repo secret.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm provenance via OIDC (public repo)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # The repo pins yarn@4 via package.json "packageManager"; corepack honours it.
+      - run: corepack enable
+      - run: yarn install --immutable
+      # Publishes in topological order (tl → server → testing), skips the private
+      # demo app, and rewrites workspace:* deps to real versions. prepack builds
+      # each package's dist/ first. --tolerate-republish makes re-runs idempotent.
+      - run: yarn workspaces foreach -A --topological-dev --no-private npm publish --tolerate-republish --access public
+        env:
+          YARN_NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          YARN_NPM_PUBLISH_PROVENANCE: 'true'

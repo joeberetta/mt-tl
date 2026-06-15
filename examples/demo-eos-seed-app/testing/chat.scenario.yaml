@@ -1,0 +1,35 @@
+# Example QA scenario for the demo app. Run it against a stand:
+#
+#   mtproto-test run testing/chat.scenario.yaml --recipes testing/recipes.ts
+#
+# Reproduce on another stand by swapping the URL + credentials with --config:
+#
+#   mtproto-test run testing/chat.scenario.yaml --recipes testing/recipes.ts \
+#     --config testing/stand-staging.yaml
+#
+# You must provide the stand's RSA *public* key at the `publicKey` path below.
+
+target:
+    url: ws://127.0.0.1:8081
+    schema: ../schema # this app's business .tl (relative to this file)
+    publicKey: ./server-pub.pem # the stand's RSA public key (PEM)
+    layer: 204 # negotiate this TL layer via invokeWithLayer(initConnection(...))
+
+vars: # overridable per stand via --config / --var
+    ALICE_SEED: 'alice local seed — do not use in prod'
+    BOB_SEED: 'bob local seed — do not use in prod'
+
+users:
+    alice:
+        auth: { recipe: eos-signup, with: { seed: '${ALICE_SEED}', first_name: Alice, username: alice } }
+    bob:
+        auth: { recipe: eos-signup, with: { seed: '${BOB_SEED}', first_name: Bob, username: bob } }
+
+steps:
+    - { as: alice, invoke: help.getConfig, expect: { _: config } }
+    - { as: alice, invoke: updates.getState, expect: { _: updates.state } }
+    - as: alice
+      invoke: messages.getDialogs
+      params: { offset_date: 0, offset_id: 0, offset_peer: { _: inputPeerEmpty }, limit: 20, hash: 0 }
+      expect: { _: messages.dialogs }
+    - { as: bob, invoke: updates.getState, expect: { _: updates.state } }

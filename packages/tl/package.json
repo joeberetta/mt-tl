@@ -1,0 +1,67 @@
+{
+    "name": "@mt-tl/tl",
+    "version": "0.1.1",
+    "type": "module",
+    "description": "TL (Type Language) tooling for MTProto: parser/IR, generic wire codec, value↔JSON, migrations, a TypeScript type generator, layer freezing, and the bundled MTProto protocol schema.",
+    "license": "MIT",
+    "author": "Joe Beretta",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/joeberetta/mt-tl.git",
+        "directory": "packages/tl"
+    },
+    "homepage": "https://github.com/joeberetta/mt-tl/tree/master/packages/tl#readme",
+    "bugs": "https://github.com/joeberetta/mt-tl/issues",
+    "keywords": [
+        "mtproto",
+        "telegram",
+        "tl",
+        "type-language",
+        "codec",
+        "schema",
+        "codegen"
+    ],
+    "engines": {
+        "node": ">=20"
+    },
+    "sideEffects": false,
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "files": [
+        "dist",
+        "src",
+        "schema"
+    ],
+    "scripts": {
+        "build": "rm -rf dist && tsc -p tsconfig.build.json",
+        "clean": "rm -rf dist",
+        "prepack": "yarn run build",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run --passWithNoTests"
+    },
+    "publishConfig": {
+        "access": "public",
+        "exports": {
+            ".": {
+                "types": "./dist/index.d.ts",
+                "import": "./dist/index.js"
+            }
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.js",
+        "types": "./dist/index.d.ts",
+        "bin": {
+            "mt-tl": "./dist/cli.js"
+        }
+    },
+    "dependencies": {
+        "crc-32": "^1.2.2"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.0",
+        "tsx": "^4.19.2",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.8"
+    }
+}

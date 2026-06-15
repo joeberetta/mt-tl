@@ -1,0 +1,28 @@
+# Local-development infrastructure for the MTProto server.
+#   docker compose up -d            # mongo + redis
+# The app runs on the host against this (dev), or is containerized via
+# docker-compose.apps.yml.
+services:
+    mongo:
+        image: mongo:7
+        restart: unless-stopped
+        ports: ['27017:27017']
+        volumes: ['mongo-data:/data/db']
+        healthcheck:
+            test: ['CMD', 'mongosh', '--quiet', '--eval', "db.runCommand('ping').ok"]
+            interval: 5s
+            timeout: 5s
+            retries: 10
+
+    redis:
+        image: redis:7-alpine
+        restart: unless-stopped
+        ports: ['6380:6379'] # 6379 often taken locally; use 6380 on the host
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+volumes:
+    mongo-data:
