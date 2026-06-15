@@ -5,9 +5,12 @@ name: Publish packages to npm
 #   bump versions in packages/*/package.json → git tag v0.1.2 → git push --tags
 # Or run it by hand from the Actions tab (workflow_dispatch).
 #
-# ONE-TIME SETUP (required): create an npm token with publish rights to the
-# @mt-tl scope and add it as the repo secret `NPM_TOKEN`
-# (Settings → Secrets and variables → Actions → New repository secret).
+# AUTH: npm "trusted publishing" (OIDC) — no token, no secret. One-time, ON NPM,
+# configure a Trusted Publisher PER package (@mt-tl/tl, @mt-tl/server,
+# @mt-tl/testing): npmjs.com → the package → Settings → Trusted Publisher → GitHub
+# Actions → repo `joeberetta/mt-tl`, workflow file `release.yml`. NB: a package
+# that has never been published yet can't get a trusted publisher — do its first
+# publish once with a token, after which it goes tokenless like the rest.
 on:
     push:
         tags: ['v*']
@@ -15,7 +18,7 @@ on:
 
 permissions:
     contents: read
-    id-token: write # npm provenance via OIDC (public repo)
+    id-token: write # OIDC: npm trusted-publishing auth + provenance attestation
 
 # One publish at a time; let an in-progress release finish (never cancel a publish).
 concurrency:
@@ -38,14 +41,25 @@ jobs:
             - run: yarn typecheck
             - run: yarn test
 
-            # Publish in topological order by PRODUCTION deps (tl → server → testing),
-            # skipping the private demo app + website, rewriting workspace:* deps to real
-            # versions. NB: --topological (not --topological-dev) — server devDepends on
-            # testing while testing depends on server, so including dev edges would be a
-            # cycle. Each package's `prepack` builds its dist/ first. Per-package version
-            # comes from package.json (independent of the tag name); --tolerate-republish
-            # skips any version already on npm, so re-running a tag is safe.
-            # --provenance is the explicit, documented flag (build attestation via the
-            # OIDC id-token above); it does NOT authenticate — publishing still needs
-            # the NPM_TOKEN below (Yarn has no tokenless/trusted-publishing path).
-            - run: yarn workspaces foreach -A --topological --no-private npm publish --tolerate-republish --access public --provenance
+            # Publish via the npm CLI, because npm's OIDC trusted publishing (tokenless)
+            # is an npm-CLI feature — Yarn's own publisher only auths by token. For each
+            # package (in prod-dep order tl → server → testing) we `yarn pack` it (which
+            # rewrites workspace:* deps to real versions AND runs prepack → builds dist),
+            # then hand the tarball to `npm publish`, which does the OIDC exchange against
+            # that package's configured trusted publisher. Versions already on npm are
+            # skipped, so re-running a tag is safe. Trusted publishing needs npm >= 11.5.1
+            # (newer than the runner's bundled npm), so upgrade it first.
+            - run: npm install -g npm@latest
+            - name: Publish (OIDC trusted publishing)
+              run: |
+                  set -euo pipefail
+                  for pkg in tl server testing; do
+                      name="@mt-tl/$pkg"
+                      ver="$(node -p "require('./packages/$pkg/package.json').version")"
+                      if npm view "$name@$ver" version >/dev/null 2>&1; then
+                          echo "::notice::$name@$ver already on npm — skipping"
+                          continue
+                      fi
+                      yarn workspace "$name" pack --out "$RUNNER_TEMP/$pkg.tgz"
+                      npm publish "$RUNNER_TEMP/$pkg.tgz" --access public --provenance
+                  done
