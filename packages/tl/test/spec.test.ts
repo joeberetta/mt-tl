@@ -23,22 +23,46 @@ const meth = (id: string, method: string, type: string, params: [string, string]
 })
 
 const L100 = {
-    constructors: [ctor('aa01', 'demo.profile', 'demo.Profile', [['name', 'string']]), ctor('lg01', 'legacy.thing', 'legacy.Thing', [['x', 'int']])],
+    constructors: [
+        ctor('aa01', 'demo.profile', 'demo.Profile', [['name', 'string']]),
+        ctor('lg01', 'legacy.thing', 'legacy.Thing', [['x', 'int']]),
+    ],
     methods: [meth('m001', 'demo.getProfile', 'demo.Profile', [])],
 }
 const L101 = {
     constructors: [
-        ctor('aa02', 'demo.profile', 'demo.Profile', [['first_name', 'string'], ['last_name', 'string']]),
+        ctor('aa02', 'demo.profile', 'demo.Profile', [
+            ['first_name', 'string'],
+            ['last_name', 'string'],
+        ]),
         ctor('lg01', 'legacy.thing', 'legacy.Thing', [['x', 'int']]),
     ],
     methods: [
         meth('m001', 'demo.getProfile', 'demo.Profile', []),
-        meth('m101', 'demo.echo', 'demo.EchoResult', [['flags', '#'], ['peer', 'InputPeer'], ['history', 'Vector<demo.Profile>'], ['silent', 'flags.5?true']]),
+        meth('m101', 'demo.echo', 'demo.EchoResult', [
+            ['flags', '#'],
+            ['peer', 'InputPeer'],
+            ['history', 'Vector<demo.Profile>'],
+            ['silent', 'flags.5?true'],
+        ]),
     ],
 }
 const L102 = {
-    constructors: [ctor('aa03', 'demo.profile', 'demo.Profile', [['first_name', 'string'], ['last_name', 'string'], ['username', 'string']])],
-    methods: [meth('m102', 'demo.echo', 'demo.EchoResult', [['flags', '#'], ['history', 'Vector<demo.Profile>'], ['silent', 'flags.5?true'], ['effect', 'flags.7?long']])],
+    constructors: [
+        ctor('aa03', 'demo.profile', 'demo.Profile', [
+            ['first_name', 'string'],
+            ['last_name', 'string'],
+            ['username', 'string'],
+        ]),
+    ],
+    methods: [
+        meth('m102', 'demo.echo', 'demo.EchoResult', [
+            ['flags', '#'],
+            ['history', 'Vector<demo.Profile>'],
+            ['silent', 'flags.5?true'],
+            ['effect', 'flags.7?long'],
+        ]),
+    ],
 }
 
 let spec: ApiSpec
@@ -90,5 +114,37 @@ describe('buildApiSpec — layer awareness', () => {
         expect([effect.since, effect.removed, effect.optional, effect.flagBit]).toEqual([102, false, true, 7])
         const history = echo.latest.params.find(x => x.name === 'history')!
         expect(history.ref).toBe('demo.Profile') // vector inner, unwrapped
+    })
+})
+
+describe('buildApiSpec — protocol is hidden from the docs', () => {
+    it('drops low-level protocol types but keeps the public wrappers + business', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'mttl-spec-proto-'))
+        writeFileSync(
+            join(dir, 'scheme_300.json'),
+            JSON.stringify({
+                constructors: [
+                    ctor('aa01', 'demo.thing', 'demo.Thing', [['x', 'int']]),
+                    ctor('2144ca19', 'rpc_error', 'RpcError', [['error_code', 'int']]),
+                    ctor('1cb5c415', 'vector', 'Vector', []),
+                ],
+                methods: [
+                    meth('b001', 'demo.do', 'demo.Thing', []),
+                    meth('7abe77ec', 'ping', 'Pong', [['ping_id', 'long']]),
+                    meth('da9b0d0d', 'invokeWithLayer', 'X', [['layer', 'int']]), // wrapper → kept
+                ],
+            }),
+        )
+        const s = buildApiSpec(dir)
+
+        // Business + the public wrappers survive…
+        expect(Object.keys(s.constructors)).toContain('demo.thing')
+        expect(Object.keys(s.methods)).toEqual(expect.arrayContaining(['demo.do', 'invokeWithLayer']))
+        // …low-level protocol plumbing is gone (incl. its types).
+        expect(s.constructors).not.toHaveProperty('rpc_error')
+        expect(s.constructors).not.toHaveProperty('vector')
+        expect(s.methods).not.toHaveProperty('ping')
+        expect(s.types).not.toHaveProperty('RpcError')
+        expect(s.types).not.toHaveProperty('Vector')
     })
 })

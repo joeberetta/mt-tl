@@ -35,6 +35,9 @@ export {
 // The system config object the server takes.
 export type { MTProtoConfig } from './lib.js'
 
+// The initConnection audit/validation hook — createServer(config, { onInitConnection }).
+export type { OnInitConnection, InitConnectionInfo } from './lib.js'
+
 // Structured logger (re-exported from @mt-tl/tl) — build one with createLogger
 // and pass it to createServer, or use the same factory in your app code for a
 // unified log style. Handlers get a per-request child via `ctx.log`; the server

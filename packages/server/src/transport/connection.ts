@@ -26,6 +26,8 @@ export interface ConnectionCtx extends MsgIdState {
     appVersion?: string
     systemLangCode?: string
     langCode?: string
+    /** Full `initConnection` fields (minus `_`/`query`) as tagged JSON — incl. custom ones. */
+    initParams?: Record<string, unknown>
     /** Bound subject (internal user id) once the auth key is authorized. */
     subject?: string
 

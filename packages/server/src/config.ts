@@ -38,8 +38,17 @@ export interface MTProtoConfig {
     allowedApiIds?: number[]
     /** Directory of your business `.tl` schema (the protocol schema is bundled). */
     schemaDir: string
-    /** Directory of per-layer snapshots (`scheme_N.json`) that drive layered encoding. */
+    /**
+     * Optional override for the bundled MTProto protocol schema (dir or `.tl` file).
+     * Its defs WIN name/id clashes over the bundled protocol (overlay) — declare
+     * only what you change, e.g. an `initConnection` with extra fields. Omit to use
+     * the bundled protocol as-is. Pass the SAME path to the studio (`--protocol`).
+     */
+    protocolSchemaDir?: string
+    /** Directory of per-layer snapshots (`<prefix>N.json`) that drive layered encoding. */
     schemaLayersDir: string
+    /** Filename prefix of the per-layer snapshots in {@link schemaLayersDir}. Default `scheme_`. */
+    schemaLayerPrefix?: string
     /**
      * Path to the server's RSA private key (PEM). Clients pin its fingerprint, so a
      * real client needs the production key here. Omitted → an ephemeral key is

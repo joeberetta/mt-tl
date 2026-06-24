@@ -9,6 +9,9 @@ import { loadSchema, TlCodec } from '@mt-tl/server/testkit'
  * (first registration wins), matching the gateway.
  *
  * @param schemaDirs - the app's business `.tl` directory (or several).
+ * @param protocolOverrideDir - optional override for the bundled protocol (dir or
+ *   `.tl`); its defs win clashes, so a test client speaks the same overridden
+ *   protocol (e.g. an `initConnection` with extra fields) as the server.
  *
  * @example
  * ```ts
@@ -16,8 +19,12 @@ import { loadSchema, TlCodec } from '@mt-tl/server/testkit'
  * const session = await TestSession.open(url, publicKey, codec)
  * ```
  */
-export function createCodec(schemaDirs: string | string[]): TlCodec {
+export function createCodec(schemaDirs: string | string[], protocolOverrideDir?: string): TlCodec {
     const dirs = Array.isArray(schemaDirs) ? schemaDirs : [schemaDirs]
-    const { registry } = loadSchema([protocolSchemaDir, ...dirs])
+    const { registry } = loadSchema(
+        protocolOverrideDir
+            ? [protocolOverrideDir, protocolSchemaDir, ...dirs]
+            : [protocolSchemaDir, ...dirs],
+    )
     return new TlCodec(registry)
 }

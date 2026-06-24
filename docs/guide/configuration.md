@@ -15,6 +15,8 @@ interface MTProtoConfig {
     defaultLayer: number // TL layer until a client announces one
     schemaDir: string // YOUR business .tl
     schemaLayersDir: string // per-layer snapshots (scheme_N.json)
+    schemaLayerPrefix?: string // snapshot filename prefix (default "scheme_")
+    protocolSchemaDir?: string // override the bundled MTProto protocol (overlay)
     rsaKeyPath?: string // production PEM (clients pin its fingerprint)
     trustProxy?: boolean // read the real client IP from a fronting proxy
     disableMsgKeyCheck?: boolean // ⚠️ insecure interop shim — keep false
@@ -28,18 +30,20 @@ interface MTProtoConfig {
 }
 ```
 
-| Field             | What it does                                                                                                                                  |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nodeId`          | Unique, stable id per replica — the presence routing key for server-push. Use the pod/hostname. **Must differ per replica.**                  |
-| `wsPort`          | WebSocket carrier port. Omit to disable WS.                                                                                                    |
-| `tcpPort`         | Raw-TCP (MTProto over TCP) carrier port. Omit to disable raw TCP.                                                                              |
-| `defaultLayer`    | The TL layer used for a connection until it sends `invokeWithLayer`. A fallback, **not** "the schema version".                                |
-| `schemaDir`       | Path to your business `.tl`. The MTProto protocol schema is bundled — you don't list it.                                                       |
-| `schemaLayersDir` | Path to frozen per-layer snapshots (`scheme_N.json`). See [schema versions & layers](releasing-a-version.md).                                  |
-| `rsaKeyPath`      | Path to the production RSA private key (PEM). Real clients pin its fingerprint — see below. Omit and the server generates an ephemeral key (test clients only). |
-| `trustProxy`      | When behind nginx/HAProxy, read the real client IP (`X-Forwarded-For` for WS, PROXY protocol for TCP) instead of the proxy's. See [deployment](deployment.md#behind-a-proxy-nginx--haproxy). |
-| `storage`         | Where auth keys / sessions / salts live — see below.                                                                                           |
-| `updates`         | Server-push — see below.                                                                                                                       |
+| Field               | What it does                                                                                                                                                                                                                                         |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nodeId`            | Unique, stable id per replica — the presence routing key for server-push. Use the pod/hostname. **Must differ per replica.**                                                                                                                         |
+| `wsPort`            | WebSocket carrier port. Omit to disable WS.                                                                                                                                                                                                          |
+| `tcpPort`           | Raw-TCP (MTProto over TCP) carrier port. Omit to disable raw TCP.                                                                                                                                                                                    |
+| `defaultLayer`      | The TL layer used for a connection until it sends `invokeWithLayer`. A fallback, **not** "the schema version".                                                                                                                                       |
+| `schemaDir`         | Path to your business `.tl`. The MTProto protocol schema is bundled — you don't list it.                                                                                                                                                             |
+| `schemaLayersDir`   | Path to frozen per-layer snapshots (`scheme_N.json`). See [schema versions & layers](releasing-a-version.md).                                                                                                                                        |
+| `schemaLayerPrefix` | Filename prefix of the snapshots in `schemaLayersDir`. Default `scheme_`. Set it only if you froze with a custom `--prefix` (e.g. `layer_`).                                                                                                         |
+| `protocolSchemaDir` | Override the bundled MTProto protocol schema (dir or `.tl`). Its defs **win** name/id clashes (overlay), so declare only what you change — e.g. an `initConnection` with extra fields. See [extending the protocol](#extending-the-protocol-schema). |
+| `rsaKeyPath`        | Path to the production RSA private key (PEM). Real clients pin its fingerprint — see below. Omit and the server generates an ephemeral key (test clients only).                                                                                      |
+| `trustProxy`        | When behind nginx/HAProxy, read the real client IP (`X-Forwarded-For` for WS, PROXY protocol for TCP) instead of the proxy's. See [deployment](deployment.md#behind-a-proxy-nginx--haproxy).                                                         |
+| `storage`           | Where auth keys / sessions / salts live — see below.                                                                                                                                                                                                 |
+| `updates`           | Server-push — see below.                                                                                                                                                                                                                             |
 
 ### Storage
 
@@ -81,6 +85,7 @@ import { createServer, createLogger } from '@mt-tl/server'
 const app = createServer(config, {
     logger, // a createLogger(...) instance (else one is built from env)
     migrations, // a MigrationRegistry for breaking schema changes
+    onInitConnection, // audit/validate the client's initConnection (throw to reject)
 })
 ```
 
@@ -89,6 +94,44 @@ const app = createServer(config, {
   environment.
 - `migrations` — a `MigrationRegistry`, applied around every handler. See
   [schema versions & layers](releasing-a-version.md#migration-ladders).
+- `onInitConnection(body, info)` — called when a client sends `initConnection`, with
+  its full decoded body (including any custom fields you added by overriding the
+  protocol schema) and `{ authKeyId, sessionId, ip, apiLayer }`. Runs **before** the
+  framework persists anything, so **throw** to reject the connection — nothing is
+  written and the client gets an `rpc_error`. See [extending the protocol](#extending-the-protocol-schema).
+
+## Extending the protocol schema
+
+The MTProto protocol layer (handshake, service messages, `initConnection`,
+`invokeWithLayer`, …) is bundled in `@mt-tl/tl`. To **add fields** to a protocol
+type — e.g. push a couple of custom fields through `initConnection` — point
+`protocolSchemaDir` at a `.tl` that redeclares just that type:
+
+```ts
+// protocol/initConnection.tl  — overlay: only what you change
+//   initConnection#a1b2c3d4 {X:Type} flags:# api_id:int device_model:string
+//     system_version:string app_version:string system_lang_code:string
+//     lang_pack:string lang_code:string tenant_id:flags.2?string query:!X = X;
+const app = createServer({ ...config, protocolSchemaDir: './protocol' })
+```
+
+Your override **wins** name/id clashes over the bundled protocol (the bundled one
+still fills everything you didn't touch). The extra fields a client sends are:
+
+- handed to handlers on `ctx.request.initParams` (tagged JSON; the standard ones —
+  `apiId`, `deviceModel`, … — are also pre-extracted as typed fields), and
+- **persisted** automatically to the auth key's meta (`AuthKeyMeta.initParams`) — no
+  `onInitConnection` needed for storage; the hook is only for audit/validation, and
+  to write into your **own** DB if you keep one.
+
+Two caveats:
+
+- Pass the **same** path to the studio (`mt-tl-studio build --protocol ./protocol`)
+  so its playground speaks your protocol and its docs hide the low-level types.
+- This works end-to-end for types the **client sends** (like `initConnection`). For
+  messages the server **generates** (`rpc_error`, `pong`, …) an override changes the
+  wire shape, but the engine won't populate new fields without a dedicated hook —
+  not wired yet.
 
 ## Environment variables
 
@@ -99,12 +142,12 @@ The framework itself reads none. The two places env _is_ read:
   `UPDATES_ENABLED`, `TRUST_PROXY`).
 - **The default logger** `createServer` builds when you don't pass one:
 
-| Env var           | Default              | Effect                                  |
-| ----------------- | -------------------- | --------------------------------------- |
-| `LOG_LEVEL`       | `info`               | Threshold (`trace`…`silent`).           |
-| `LOG_FORMAT`      | `pretty`             | `json` for machine-readable lines.      |
-| `LOG_ERROR_STACK` | pretty:on / json:off | Force `Error.stack` on/off.             |
-| `NO_COLOR` / `FORCE_COLOR` | unset       | Disable / force ANSI color.             |
+| Env var                    | Default              | Effect                             |
+| -------------------------- | -------------------- | ---------------------------------- |
+| `LOG_LEVEL`                | `info`               | Threshold (`trace`…`silent`).      |
+| `LOG_FORMAT`               | `pretty`             | `json` for machine-readable lines. |
+| `LOG_ERROR_STACK`          | pretty:on / json:off | Force `Error.stack` on/off.        |
+| `NO_COLOR` / `FORCE_COLOR` | unset                | Disable / force ANSI color.        |
 
 Full logging guide: [observability](observability.md).
 

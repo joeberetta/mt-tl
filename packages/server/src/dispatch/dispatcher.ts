@@ -43,6 +43,23 @@ const WRAPPERS = new Set([
     'invokeWithTakeout',
 ])
 
+/** Identity passed to {@link OnInitConnection} alongside the decoded body. */
+export interface InitConnectionInfo {
+    authKeyId?: bigint
+    sessionId?: bigint
+    ip?: string
+    apiLayer: number
+}
+
+/**
+ * Called when a client sends `initConnection`, with its FULL decoded body
+ * (including any custom fields an overridden protocol schema adds). Use it for
+ * audit/validation; THROW to reject the connection — the wrapped query is not
+ * run and the client receives an `rpc_error`. The decoded fields are also
+ * surfaced on the handler context as `ctx.request.initParams`.
+ */
+export type OnInitConnection = (body: TlObject, info: InitConnectionInfo) => void | Promise<void>
+
 export interface DispatcherDeps {
     codec: TlCodec
     registry: TlRegistry
@@ -61,6 +78,8 @@ export interface DispatcherDeps {
     disableSeqNoCheck?: boolean
     /** Whitelist of accepted `initConnection.api_id`s; omitted → any id is accepted. */
     allowedApiIds?: Iterable<number>
+    /** Audit/validation hook fired on `initConnection` (throw to reject). */
+    onInitConnection?: OnInitConnection
 }
 
 export class Dispatcher {
@@ -187,12 +206,14 @@ export class Dispatcher {
     }
 
     /**
-     * Process an `initConnection` envelope: optionally enforce the `api_id`
-     * whitelist, then capture the device/app fields onto the connection and
-     * persist them to the auth key's meta (the per-device source of truth; an
-     * auth key is one app install, so this is stable per key, not per session).
-     * Returns `true` when the connection was rejected (caller must not dispatch
-     * the wrapped query).
+     * Process an `initConnection` envelope. Order matters: (1) enforce the
+     * `api_id` whitelist, (2) run `onInitConnection` for audit/validation — it
+     * fires BEFORE any persistence, so throwing rejects the connection and writes
+     * nothing, (3) capture the device/app fields + the full decoded params onto
+     * the connection and persist them to the auth key's meta (the per-device
+     * source of truth; an auth key is one app install, so this is stable per key,
+     * not per session). Returns `true` when the connection was rejected (caller
+     * must not dispatch the wrapped query).
      */
     private async handleInitConnection(
         body: TlObject,
@@ -209,6 +230,31 @@ export class Dispatcher {
             this.sendRpcError(conn, ctx.msgId, 400, 'API_ID_INVALID')
             return true
         }
+        // Audit/validate BEFORE persisting — a rejected connection writes nothing.
+        if (this.deps.onInitConnection) {
+            try {
+                await this.deps.onInitConnection(body, {
+                    authKeyId: conn.ctx.authKeyId,
+                    sessionId: conn.ctx.sessionId,
+                    ip: conn.ctx.remoteAddress,
+                    apiLayer: conn.ctx.apiLayer,
+                })
+            } catch (err) {
+                this.logger.warn('initConnection.hook.rejected', {
+                    authKeyId: conn.ctx.authKeyId,
+                    sessionId: conn.ctx.sessionId,
+                    err,
+                })
+                this.sendRpcError(conn, ctx.msgId, 400, 'INIT_CONNECTION_REJECTED')
+                return true
+            }
+        }
+        // The FULL decoded fields (minus the wrapper plumbing) as tagged JSON, so
+        // they're serialization-safe to persist AND mirror the engine's `params`
+        // convention. Surfaced as `ctx.request.initParams` and stored on the auth
+        // key's meta — the escape hatch for CUSTOM fields (e.g. `tenant_id`).
+        const { _: _name, query: _query, ...rawParams } = body
+        const initParams = toJson(rawParams as TlValue) as Record<string, unknown>
         const meta = {
             apiId,
             deviceModel: asString(body.device_model),
@@ -216,6 +262,7 @@ export class Dispatcher {
             appVersion: asString(body.app_version),
             systemLangCode: asString(body.system_lang_code),
             langCode: asString(body.lang_code),
+            initParams,
         }
         conn.ctx.apiId = meta.apiId
         conn.ctx.deviceModel = meta.deviceModel
@@ -223,6 +270,7 @@ export class Dispatcher {
         conn.ctx.appVersion = meta.appVersion
         conn.ctx.systemLangCode = meta.systemLangCode
         conn.ctx.langCode = meta.langCode
+        conn.ctx.initParams = initParams
         if (conn.ctx.authKeyId !== undefined) {
             await this.deps.storage.authKeys.updateMeta(conn.ctx.authKeyId, meta)
         }
@@ -368,6 +416,7 @@ export class Dispatcher {
             systemVersion: conn.ctx.systemVersion,
             appVersion: conn.ctx.appVersion,
             langCode: conn.ctx.langCode,
+            initParams: conn.ctx.initParams,
             ip: conn.ctx.remoteAddress,
         }
 

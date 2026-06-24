@@ -21,6 +21,13 @@ export interface AuthKeyMeta {
     systemLangCode?: string
     /** `initConnection.lang_code`. */
     langCode?: string
+    /**
+     * The FULL decoded `initConnection` fields (minus `_`/`query`) as tagged JSON
+     * (`bigint`→`{$bigint}`, `bytes`→`{$bin}`) — serialization-safe for any backend.
+     * The standard fields above are also here; this is the escape hatch for CUSTOM
+     * fields an overridden protocol schema adds (e.g. `tenant_id`).
+     */
+    initParams?: Record<string, unknown>
 }
 
 export interface AuthKeyRecord {

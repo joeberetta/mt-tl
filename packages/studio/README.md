@@ -39,6 +39,8 @@ npx serve ./site               # browse http://localhost:3000
 
 `--layers` accepts either raw `scheme_<N>.tl` files **or** frozen `scheme_<N>.json`
 snapshots (the framework's `mt-tl freeze` output); `.json` wins when both exist.
+Using a custom filename prefix? Pass `--prefix <p>` (default `scheme_`) — it must
+match the prefix the layers were frozen with, e.g. `--prefix layer_` for `layer_<N>.json`.
 
 ## Authoring docs (incremental)
 
@@ -73,7 +75,7 @@ provide, plain intermediate framing) — for servers built with `@mt-tl/server`.
 
 > **Talking to real Telegram.** Tick **obfuscated transport (Telegram)** in the key panel and
 > the client switches to the WebSocket transport Telegram requires (`Sec-WebSocket-Protocol:
-> binary` + the obfuscated/AES-CTR stream). Paste Telegram's server RSA key, set your `api_id`
+binary` + the obfuscated/AES-CTR stream). Paste Telegram's server RSA key, set your `api_id`
 > (from [my.telegram.org](https://my.telegram.org)), point the URL at a Telegram WS endpoint
 > (e.g. `wss://venus.web.telegram.org/apiws_test` for the test DC), and unauthenticated calls
 > like `help.getConfig` work. Logged-in methods still need the full Telegram auth flow.
@@ -82,9 +84,18 @@ provide, plain intermediate framing) — for servers built with `@mt-tl/server`.
 
 ```
 mt-tl-studio build --layers <dir> --out <dir>
-    [--descriptions <dir>] [--scenarios <dir>] [--changelog <dir>] [--recipes <dir>]
+    [--prefix <p>] [--protocol <dir>] [--descriptions <dir>] [--scenarios <dir>] [--changelog <dir>] [--recipes <dir>]
     [--default-url <ws-url>] [--default-key <pem-file>] [--default-obfuscated]
 ```
+
+The reference renders your **business API only** — low-level MTProto types (handshake,
+service messages, `vector`, `rpc_error`, …) are hidden; the `initConnection`/`invokeWithLayer`
+wrappers stay. The playground still loads the full protocol, so live calls work.
+
+- `--prefix <p>` — snapshot filename prefix (default `scheme_`). Must match the prefix the
+  layers were frozen with (`mt-tl freeze … --prefix`).
+- `--protocol <dir>` — your overridden protocol schema (dir or `.tl`), the same one the
+  server runs with. Hides its low-level types from the docs and lets the playground speak it.
 
 - `--recipes <dir>` — bundle ready auth recipes (`<name>.js`/`.mjs` ES modules, optional
   `<name>.args.json`) so your team reuses them out of the box (shown alongside locally-saved

@@ -11,11 +11,14 @@ const USAGE = `mt-tl-studio — interactive MTProto API explorer
 
 Usage:
   mt-tl-studio build --layers <dir> --out <dir>
-      [--descriptions <dir>] [--scenarios <dir>] [--changelog <dir>] [--recipes <dir>]
+      [--prefix <p>] [--protocol <dir>] [--descriptions <dir>] [--scenarios <dir>] [--changelog <dir>] [--recipes <dir>]
       [--default-url <ws-url>] [--default-key <pem-file>] [--default-obfuscated]
       Assemble a static, self-hostable site: copies the explorer UI, generates
       api.json from your frozen layer snapshots, and (optionally) bundles your
       per-symbol Markdown descriptions + Markdown scenario guides. Host <out> anywhere.
+      --prefix must match the snapshot filename prefix you froze with (default "scheme_").
+      --protocol points at your overridden protocol schema (same one the server uses),
+      so its low-level types are hidden from the docs and the playground speaks it.
 `
 
 function fail(msg: string): never {
@@ -34,17 +37,20 @@ const cmd = process.argv[2]
 if (cmd === 'build') {
     const layers = flag('layers')
     const out = flag('out')
+    const prefix = flag('prefix')
+    const protocol = flag('protocol')
     const descriptions = flag('descriptions')
     if (!layers || !out) fail('build requires --layers <dir> --out <dir>')
-    if (!existsSync(APP_DIR)) fail(`explorer UI not found at ${APP_DIR} — the package may be built incorrectly`)
+    if (!existsSync(APP_DIR))
+        fail(`explorer UI not found at ${APP_DIR} — the package may be built incorrectly`)
 
     mkdirSync(out, { recursive: true })
     cpSync(APP_DIR, out, { recursive: true })
-    const spec = buildApiSpec(layers)
+    const spec = buildApiSpec(layers, prefix, protocol)
     writeFileSync(join(out, 'api.json'), JSON.stringify(spec))
     // Flat protocol+business registry the in-browser playground client uses to
     // encode/decode against the consumer's own ws:// server (the "try it" panel).
-    writeFileSync(join(out, 'wire.json'), JSON.stringify(buildWireDefs(layers)))
+    writeFileSync(join(out, 'wire.json'), JSON.stringify(buildWireDefs(layers, prefix, protocol)))
 
     if (descriptions && existsSync(descriptions)) {
         const map: Record<string, string> = {}
@@ -59,7 +65,9 @@ if (cmd === 'build') {
         // the relative path (e.g. auth/login), which the studio groups into a tree.
         const walk = (dir: string, base = ''): { slug: string; title: string; body: string }[] => {
             const out2: { slug: string; title: string; body: string }[] = []
-            for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+            for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+                a.name.localeCompare(b.name),
+            )) {
                 const rel = base ? `${base}/${e.name}` : e.name
                 if (e.isDirectory()) out2.push(...walk(join(dir, e.name), rel))
                 else if (e.name.endsWith('.md')) {

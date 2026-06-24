@@ -54,6 +54,12 @@ mirror (not loaded). The layer number is the **filename** (`scheme_205.json` →
 not the file contents. `defaultLayer` in your config is only the fallback for a
 connection that hasn't announced one — not "the schema version".
 
+Prefer a different filename? Pass `--prefix` to rename the snapshots (e.g.
+`mt-tl freeze ./schema ./schema/layers 205 --prefix layer_` → `layer_205.json`).
+The default is `scheme_`. If you change it, pass the **same** prefix to the readers:
+`schemaLayerPrefix` in the [server config](configuration.md) and `--prefix` on
+[`mt-tl-studio build`](studio.md).
+
 Then the `.tl` keeps evolving toward 206. **Always freeze the newest shipped layer
 too** — otherwise a type that changed in it would encode with a stale id for clients
 on that layer. Snapshots must be **identical across all instances**.
@@ -90,7 +96,9 @@ export const migrations = new MigrationRegistry().register('user', [
 Pass it to the server (applied around every handler automatically):
 
 ```ts
-createServer(config, { migrations }).register(demoApp, { /* … */ })
+createServer(config, { migrations }).register(demoApp, {
+    /* … */
+})
 ```
 
 A handler now always sees `user.phones: string[]`. A client on layer 180 sends

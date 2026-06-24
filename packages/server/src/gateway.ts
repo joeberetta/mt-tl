@@ -7,7 +7,7 @@ import { createStorage, type Storage } from './storage/index.js'
 import { NonceStore } from './auth/nonce-store.js'
 import { Handshake } from './auth/handshake.js'
 import { SaltService } from './session/salts.js'
-import { Dispatcher } from './dispatch/dispatcher.js'
+import { Dispatcher, type OnInitConnection } from './dispatch/dispatcher.js'
 import { PrintForwarder } from './dispatch/forwarders/print.js'
 import type { RpcForwarder } from './dispatch/rpc-forwarder.js'
 import { MessagePipeline } from './server/message-pipeline.js'
@@ -52,6 +52,8 @@ export interface BuildOptions {
     bus?: UpdateBus
     /** Per-predicate migration ladders (input up / output down). */
     migrations?: MigrationRegistry
+    /** Audit/validation hook fired on `initConnection` (throw to reject). */
+    onInitConnection?: OnInitConnection
 }
 
 /**
@@ -64,11 +66,15 @@ export async function buildGateway(config: MTProtoConfig, opts: BuildOptions = {
 
     // Merge the framework's protocol schema with the app's business schema — the
     // consumer ships only business `.tl`; the protocol layer lives in @mt-tl/tl.
-    const { registry, constructors, methods, crcMismatches } = loadSchema([
-        protocolSchemaDir,
-        config.schemaDir,
-    ])
-    const layeredAll = loadLayeredRegistry(config.schemaLayersDir)
+    // An optional `protocolSchemaDir` OVERRIDE is registered first so it wins
+    // name/id clashes over the bundled protocol (overlay) — e.g. to add fields to
+    // `initConnection`. `loadSchema` is first-wins, so order = [override, bundled, business].
+    const { registry, constructors, methods, crcMismatches } = loadSchema(
+        config.protocolSchemaDir
+            ? [config.protocolSchemaDir, protocolSchemaDir, config.schemaDir]
+            : [protocolSchemaDir, config.schemaDir],
+    )
+    const layeredAll = loadLayeredRegistry(config.schemaLayersDir, config.schemaLayerPrefix)
     const layered = layeredAll.hasLayers() ? layeredAll : undefined
     // Decode-union: register every layer's constructor ids so older-layer clients
     // decode by id (the name index keeps the newest, so encode is unaffected).
@@ -121,6 +127,7 @@ export async function buildGateway(config: MTProtoConfig, opts: BuildOptions = {
         logger: logger.child({ scope: 'rpc' }),
         disableSeqNoCheck: config.disableSeqNoCheck,
         allowedApiIds: config.allowedApiIds,
+        onInitConnection: opts.onInitConnection,
     })
 
     // Consume routed updates addressed to this node and push to local sockets.

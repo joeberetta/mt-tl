@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseSchemaDir } from '../tl/parser.js'
+import { DEFAULT_LAYER_PREFIX, layerSnapshotName } from './layer-naming.js'
 
 interface SnapshotEntry {
     id: string
@@ -38,8 +39,8 @@ function toTlText(constructors: SnapshotEntry[], methods: SnapshotEntry[], layer
 
 /**
  * Freezes the `.tl` schema in `schemaDir` into a per-layer snapshot
- * `<outDir>/scheme_<layer>.json` (loaded by the gateway) plus a human-readable
- * `<outDir>/scheme_<layer>.tl` mirror (for inspection/diffs; not loaded). Run
+ * `<outDir>/<prefix><layer>.json` (loaded by the gateway) plus a human-readable
+ * `<outDir>/<prefix><layer>.tl` mirror (for inspection/diffs; not loaded). Run
  * this when you SHIP a layer: the `.tl` you edit is the in-progress newest layer;
  * the frozen snapshot is the historical record the gateway uses to encode for
  * clients on that layer.
@@ -49,9 +50,15 @@ function toTlText(constructors: SnapshotEntry[], methods: SnapshotEntry[], layer
  * layer never carries protocol definitions.
  *
  * Schema ownership lives in the consumer app, so paths are explicit — apps wrap
- * this in their own `freeze` script.
+ * this in their own `freeze` script. `prefix` controls the snapshot filename
+ * (default `scheme_`); pass the SAME prefix to the gateway/studio readers.
  */
-export function freezeLayer(schemaDir: string, outDir: string, layer: number): FreezeResult {
+export function freezeLayer(
+    schemaDir: string,
+    outDir: string,
+    layer: number,
+    prefix = DEFAULT_LAYER_PREFIX,
+): FreezeResult {
     const { defs, crcMismatches } = parseSchemaDir(schemaDir)
 
     const constructors: SnapshotEntry[] = []
@@ -83,8 +90,8 @@ export function freezeLayer(schemaDir: string, outDir: string, layer: number): F
     methods.sort(byName)
 
     mkdirSync(outDir, { recursive: true })
-    const out = join(outDir, `scheme_${layer}.json`)
-    const tlOut = join(outDir, `scheme_${layer}.tl`)
+    const out = join(outDir, layerSnapshotName(layer, 'json', prefix))
+    const tlOut = join(outDir, layerSnapshotName(layer, 'tl', prefix))
     writeFileSync(out, JSON.stringify({ constructors, methods }, null, 2))
     writeFileSync(tlOut, toTlText(constructors, methods, layer))
 
@@ -97,17 +104,18 @@ export function freezeLayer(schemaDir: string, outDir: string, layer: number): F
     }
 }
 
-// CLI: `tsx freeze-layer.ts <layer> <schemaDir> <outDir>`
-//   or env: `SCHEMA_DIR=… SCHEMA_LAYERS_DIR=… tsx freeze-layer.ts <layer>`
+// CLI: `tsx freeze-layer.ts <layer> <schemaDir> <outDir> [prefix]`
+//   or env: `SCHEMA_DIR=… SCHEMA_LAYERS_DIR=… SCHEMA_LAYER_PREFIX=… tsx freeze-layer.ts <layer>`
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     const layer = Number(process.argv[2])
     const schemaDir = process.argv[3] || process.env.SCHEMA_DIR
     const outDir = process.argv[4] || process.env.SCHEMA_LAYERS_DIR
+    const prefix = process.argv[5] || process.env.SCHEMA_LAYER_PREFIX || DEFAULT_LAYER_PREFIX
     if (!Number.isInteger(layer) || layer <= 0 || !schemaDir || !outDir) {
-        console.error('usage: freeze-layer <layer> <schemaDir> <outDir>')
+        console.error('usage: freeze-layer <layer> <schemaDir> <outDir> [prefix]')
         process.exit(1)
     }
-    const r = freezeLayer(schemaDir, outDir, layer)
+    const r = freezeLayer(schemaDir, outDir, layer, prefix)
     console.log(
         `Froze layer ${layer}: ${r.constructors} constructors, ${r.methods} methods -> ${r.out} (+ ${r.tlOut})` +
             (r.crcWarnings ? `  (${r.crcWarnings} crc warnings)` : ''),

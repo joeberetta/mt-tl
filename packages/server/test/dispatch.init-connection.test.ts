@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { schemaDir } from 'demo-eos-seed-app/schema'
 import { protocolSchemaDir } from '@mt-tl/tl'
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -127,5 +130,71 @@ describe('dispatcher — initConnection', () => {
 
         expect(lastReq?.method).toBe('help.getServerConfig')
         expect((await storage.authKeys.getById(AUTH_KEY_ID))!.meta?.apiId).toBe(42)
+    })
+})
+
+describe('dispatcher — initConnection custom fields + onInitConnection hook', () => {
+    // An overridden protocol layer that adds a custom `tenant_id` to initConnection.
+    const overrideDir = mkdtempSync(join(tmpdir(), 'mt-proto-ov-'))
+    writeFileSync(
+        join(overrideDir, 'protocol.tl'),
+        '\n---functions---\n\n' +
+            'initConnection#a1b2c3d4 {X:Type} flags:# api_id:int device_model:string system_version:string app_version:string system_lang_code:string lang_pack:string lang_code:string tenant_id:flags.2?string query:!X = X;\n',
+    )
+    const ovRegistry = loadSchema([overrideDir, protocolSchemaDir, schemaDir]).registry
+    const ovCodec = new TlCodec(ovRegistry)
+
+    const customInit = (tenant: string): TlObject => ({ ...initConnection(42), tenant_id: tenant })
+
+    function makeOvDispatcher(onInitConnection?: (b: TlObject) => void): Dispatcher {
+        const responder: Responder = {
+            sendEncrypted(_c, body) {
+                ovCodec.encode(body)
+                captured.push(body)
+            },
+        }
+        const forwarder: RpcForwarder = {
+            async forward(req): Promise<RpcResponse> {
+                lastReq = req
+                return { result: true }
+            },
+        }
+        return new Dispatcher({
+            codec: ovCodec,
+            registry: ovRegistry,
+            storage,
+            saltService: new SaltService(storage.salts),
+            responder,
+            forwarder,
+            onInitConnection,
+        })
+    }
+
+    it('decodes a custom field → ctx.request.initParams, fires the hook, and persists it', async () => {
+        let hookBody: TlObject | undefined
+        await makeOvDispatcher(b => {
+            hookBody = b
+        }).dispatchPayload(ovCodec.encode(customInit('acme')), ctx, conn)
+
+        // Reaches the handler context (tagged JSON; a string is unchanged)…
+        expect(lastReq?.context.initParams).toMatchObject({ tenant_id: 'acme', api_id: 42 })
+        // …the hook saw the full decoded body…
+        expect(hookBody?.tenant_id).toBe('acme')
+        // …and it's persisted on the auth key meta.
+        const meta = (await storage.authKeys.getById(AUTH_KEY_ID))!.meta
+        expect(meta?.initParams).toMatchObject({ tenant_id: 'acme', api_id: 42 })
+    })
+
+    it('a throwing onInitConnection rejects the connection and persists nothing', async () => {
+        await makeOvDispatcher(() => {
+            throw new Error('blocked')
+        }).dispatchPayload(ovCodec.encode(customInit('acme')), ctx, conn)
+
+        const result = captured[0]!.result as TlObject
+        expect(result._).toBe('rpc_error')
+        expect(result.error_message).toBe('INIT_CONNECTION_REJECTED')
+        // The wrapped query never ran, and the hook fired BEFORE any persistence.
+        expect(lastReq).toBeUndefined()
+        expect((await storage.authKeys.getById(AUTH_KEY_ID))!.meta?.initParams).toBeUndefined()
     })
 })

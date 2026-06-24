@@ -3,10 +3,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseType, type TlType, type TlDef } from './tl/ir.js'
 import { parseSchemaDir } from './tl/parser.js'
+import { DEFAULT_LAYER_PREFIX, matchLayerFile } from './tools/layer-naming.js'
+import { PROTOCOL_WRAPPERS, protocolDefNames } from './tools/protocol.js'
+
+/** Absolute path to the bundled MTProto protocol `.tl` schema (the default source). */
+const protocolSchemaDir = fileURLToPath(new URL('../schema', import.meta.url))
 
 /**
  * A machine-readable, **layer-aware** API spec built from the frozen per-layer
- * snapshots (`scheme_<N>.json`) — the "OpenAPI for TL" that `@mt-tl/studio`
+ * snapshots (`<prefix><N>.json`, prefix default `scheme_`) — the "OpenAPI for TL" that `@mt-tl/studio`
  * renders. Per symbol we keep its shape at every layer it appears in, so the UI
  * can pin the view to a layer, show per-field `since`/`removed` badges, and diff
  * the history. Descriptions (authored MD) are merged by the studio at render
@@ -121,7 +126,7 @@ function entryToShape(e: RawEntry, layer: number): SpecShape {
             type: p.type,
             optional: pt.kind === 'flag',
             ...(pt.kind === 'flag' ? { flagBit: pt.bit } : {}),
-            ...((ref => (ref ? { ref } : {}))(typeRef(pt))),
+            ...(ref => (ref ? { ref } : {}))(typeRef(pt)),
             since: layer,
             until: layer,
             removed: false,
@@ -142,37 +147,61 @@ function snapshotFromDefs(defs: TlDef[]): Snapshot {
         params: d.params.map(p => ({ name: p.name, type: p.raw })),
         type: d.type,
     })
+    // Snapshots are BUSINESS-only — drop the protocol/core ctors `parseSchemaDir`
+    // injects (vector, rpc_result, …), mirroring {@link freezeLayer}. Otherwise
+    // pointing the studio at raw `.tl` layers would leak protocol into the docs.
+    const business = defs.filter(d => !d.isProtocol)
     return {
-        constructors: defs.filter(d => d.kind === 'constructor').map(toEntry),
-        methods: defs.filter(d => d.kind === 'method').map(toEntry),
+        constructors: business.filter(d => d.kind === 'constructor').map(toEntry),
+        methods: business.filter(d => d.kind === 'method').map(toEntry),
     }
 }
 
 /**
  * Read per-layer snapshots from a directory, accepting EITHER frozen
- * `scheme_<N>.json` OR raw `scheme_<N>.tl` (parsed on the fly). The `.json` wins
+ * `<prefix><N>.json` OR raw `<prefix><N>.tl` (parsed on the fly). The `.json` wins
  * when both exist for a layer. This lets a consumer point the studio straight at
- * their `.tl` layer files — no separate freeze step.
+ * their `.tl` layer files — no separate freeze step. `prefix` defaults to
+ * `scheme_`; pass the SAME prefix you froze with.
  */
-export function readLayerSnapshots(layersDir: string): { layer: number; snap: Snapshot }[] {
+export function readLayerSnapshots(
+    layersDir: string,
+    prefix = DEFAULT_LAYER_PREFIX,
+): { layer: number; snap: Snapshot }[] {
     const json = new Map<number, Snapshot>()
     const tl = new Map<number, string>()
     for (const f of readdirSync(layersDir)) {
-        const jm = /^scheme_(\d+)\.json$/.exec(f)
-        const tm = /^scheme_(\d+)\.tl$/.exec(f)
-        if (jm) json.set(Number(jm[1]), JSON.parse(readFileSync(join(layersDir, f), 'utf8')) as Snapshot)
-        else if (tm) tl.set(Number(tm[1]), f)
+        const jm = matchLayerFile(f, prefix, 'json')
+        const tm = matchLayerFile(f, prefix, 'tl')
+        if (jm !== null) json.set(jm, JSON.parse(readFileSync(join(layersDir, f), 'utf8')) as Snapshot)
+        else if (tm !== null) tl.set(tm, f)
     }
     const out: { layer: number; snap: Snapshot }[] = []
     for (const [layer, snap] of json) out.push({ layer, snap })
     for (const [layer, f] of tl)
-        if (!json.has(layer)) out.push({ layer, snap: snapshotFromDefs(parseSchemaDir(join(layersDir, f)).defs) })
+        if (!json.has(layer))
+            out.push({ layer, snap: snapshotFromDefs(parseSchemaDir(join(layersDir, f)).defs) })
     return out.sort((a, b) => a.layer - b.layer)
 }
 
-/** Read the per-layer snapshots and fold them into a layer-aware {@link ApiSpec}. */
-export function buildApiSpec(layersDir: string): ApiSpec {
-    const snaps = readLayerSnapshots(layersDir)
+/**
+ * Read the per-layer snapshots and fold them into a layer-aware {@link ApiSpec}.
+ *
+ * The result is the consumer's BUSINESS API only: low-level MTProto types from
+ * the protocol schema at `protocolDir` (handshake, service messages, `vector`,
+ * `rpc_error`…) are excluded so they never leak into the rendered docs. The
+ * public `invoke*`/`initConnection` wrappers ({@link PROTOCOL_WRAPPERS}) stay
+ * visible. Pass a custom `protocolDir` (the same one you run the server with) so
+ * an overridden protocol is hidden by its own definitions.
+ */
+export function buildApiSpec(
+    layersDir: string,
+    prefix = DEFAULT_LAYER_PREFIX,
+    protocolDir = protocolSchemaDir,
+): ApiSpec {
+    const snaps = readLayerSnapshots(layersDir, prefix)
+    const hidden = protocolDefNames(protocolDir)
+    for (const w of PROTOCOL_WRAPPERS) hidden.delete(w)
 
     const layers = snaps.map(s => s.layer)
     const latestLayer = layers.at(-1) ?? 0
@@ -232,13 +261,22 @@ export function buildApiSpec(layersDir: string): ApiSpec {
     ingest('method', methods)
     ingest('constructor', constructors)
 
+    // Drop low-level protocol symbols (everything from the protocol schema except
+    // the public wrappers). Done BEFORE the type pass so protocol-only types
+    // (RpcError, Pong, ResPQ…) fall out naturally with their constructors.
+    for (const n of hidden) {
+        delete methods[n]
+        delete constructors[n]
+    }
+
     // Type lifecycle: a type exists on a layer iff some constructor there returns it.
     const typeLayers: Record<string, Set<number>> = {}
     for (const { layer, snap } of snaps)
         for (const e of snap.constructors) (typeLayers[e.type] ??= new Set()).add(layer)
 
     const types: Record<string, SpecType> = {}
-    for (const c of Object.values(constructors)) (types[c.type] ??= emptyType(c.type)).constructors.push(c.name)
+    for (const c of Object.values(constructors))
+        (types[c.type] ??= emptyType(c.type)).constructors.push(c.name)
     for (const t of Object.values(types)) {
         const present = [...(typeLayers[t.name] ?? [])].sort((a, b) => a - b)
         t.sinceLayer = present[0] ?? 0
@@ -254,8 +292,6 @@ export function buildApiSpec(layersDir: string): ApiSpec {
 function emptyType(name: string): SpecType {
     return { name, constructors: [], sinceLayer: 0, lastLayer: 0, removed: false }
 }
-
-const protocolSchemaDir = fileURLToPath(new URL('../schema', import.meta.url))
 
 function entryToDef(e: RawEntry, kind: 'constructor' | 'method'): TlDef {
     return {
@@ -278,8 +314,12 @@ function entryToDef(e: RawEntry, kind: 'constructor' | 'method'): TlDef {
  * this emits ready-to-use {@link TlDef}s with parsed param types, so the consumer
  * of the JSON needs no TL parser. `@mt-tl/studio` ships it as `wire.json`.
  */
-export function buildWireDefs(layersDir: string): TlDef[] {
-    const snaps = readLayerSnapshots(layersDir).sort((a, b) => b.layer - a.layer) // latest first → wins name/id clashes
+export function buildWireDefs(
+    layersDir: string,
+    prefix = DEFAULT_LAYER_PREFIX,
+    protocolDir = protocolSchemaDir,
+): TlDef[] {
+    const snaps = readLayerSnapshots(layersDir, prefix).sort((a, b) => b.layer - a.layer) // latest first → wins name/id clashes
 
     const defs: TlDef[] = []
     const seen = new Set<string>()
@@ -289,7 +329,7 @@ export function buildWireDefs(layersDir: string): TlDef[] {
         defs.push(d)
     }
 
-    for (const d of parseSchemaDir(protocolSchemaDir).defs) push(d)
+    for (const d of parseSchemaDir(protocolDir).defs) push(d)
     for (const { snap } of snaps) {
         for (const e of snap.constructors) push(entryToDef(e, 'constructor'))
         for (const e of snap.methods) push(entryToDef(e, 'method'))

@@ -4,6 +4,7 @@ import {
     type MtprotoServer,
     type MTProtoConfig,
     type MigrationRegistry,
+    type OnInitConnection,
     type RpcMethodSpec,
 } from '@mt-tl/server'
 import type { TlCodec } from '@mt-tl/server/testkit'
@@ -13,8 +14,14 @@ import { TestSession, type ConnectOpts, type MethodSpec, type AnyMethods } from 
 export interface TestServerOptions<RM> {
     /** The app's business `.tl` schema directory (protocol schema is auto-merged). */
     schemaDir: string
-    /** Per-layer snapshot dir (`scheme_N.json`). Defaults to {@link schemaDir}. */
+    /** Per-layer snapshot dir (`<prefix>N.json`). Defaults to {@link schemaDir}. */
     schemaLayersDir?: string
+    /** Filename prefix of the per-layer snapshots. Default `scheme_`. */
+    schemaLayerPrefix?: string
+    /** Override the bundled MTProto protocol schema (dir or `.tl`); its defs win clashes. */
+    protocolSchemaDir?: string
+    /** Audit/validation hook fired on `initConnection` (throw to reject). */
+    onInitConnection?: OnInitConnection
     /** Register your routes/plugins, exactly like {@link createServer}. `NoInfer`
      *  keeps `RM` from being pinned to `unknown` by this callback, so the default
      *  applies when you don't pass `createTestServer<RpcMethods>(...)`. */
@@ -38,7 +45,9 @@ export interface TestServer<RM> {
     /** Connect a fresh client: transport + handshake done, ready to `invoke`.
      *  Pass `{ layer }` to negotiate a TL layer via `invokeWithLayer`. Pass your
      *  generated `RpcMethods` (`connect<RpcMethods>()`) for a typed `invoke`. */
-    connect<RM2 extends { [K in keyof RM2]: MethodSpec } = AnyMethods>(opts?: ConnectOpts): Promise<TestSession<RM2>>
+    connect<RM2 extends { [K in keyof RM2]: MethodSpec } = AnyMethods>(
+        opts?: ConnectOpts,
+    ): Promise<TestSession<RM2>>
     /** Shut the server down. */
     close(): Promise<void>
 }
@@ -64,7 +73,10 @@ export async function createTestServer<RM = Record<string, RpcMethodSpec>>(
     opts: TestServerOptions<RM>,
 ): Promise<TestServer<RM>> {
     const config = mergeConfig(opts)
-    const app = createServer<RM>(config, { migrations: opts.migrations })
+    const app = createServer<RM>(config, {
+        migrations: opts.migrations,
+        onInitConnection: opts.onInitConnection,
+    })
     opts.register?.(app)
     await app.listen()
 
@@ -74,7 +86,7 @@ export async function createTestServer<RM = Record<string, RpcMethodSpec>>(
         await app.close()
         throw new Error('createTestServer: WS carrier did not start (set config.wsPort or leave it default)')
     }
-    const codec = createCodec(opts.schemaDir)
+    const codec = createCodec(opts.schemaDir, opts.protocolSchemaDir)
     const url = `ws://127.0.0.1:${wsPort}`
 
     return {
@@ -96,6 +108,8 @@ function mergeConfig<RM>(opts: TestServerOptions<RM>): MTProtoConfig {
         defaultLayer: 204,
         schemaDir: opts.schemaDir,
         schemaLayersDir: opts.schemaLayersDir ?? opts.schemaDir,
+        schemaLayerPrefix: opts.schemaLayerPrefix,
+        protocolSchemaDir: opts.protocolSchemaDir,
         ...o,
         storage: { backend: 'memory', ...o.storage },
         updates: { enabled: true, presenceTtlMs: 60_000, ...o.updates },

@@ -29,6 +29,8 @@ export interface BootstrapOptions {
     logger?: Logger
     /** Per-predicate migration ladders (input `up` / output `down`). */
     migrations?: MigrationRegistry
+    /** Audit/validation hook fired on `initConnection` (throw to reject). */
+    onInitConnection?: BuildOptions['onInitConnection']
 }
 
 /**
@@ -42,7 +44,11 @@ export interface BootstrapOptions {
  */
 export async function bootstrap(opts: BootstrapOptions): Promise<Gateway> {
     const logger = opts.logger ?? createLogger({ name: opts.config.nodeId })
-    const buildOpts: BuildOptions = { logger, migrations: opts.migrations }
+    const buildOpts: BuildOptions = {
+        logger,
+        migrations: opts.migrations,
+        onInitConnection: opts.onInitConnection,
+    }
     const closers: Array<() => Promise<void>> = []
     let publish: UpdatePublish = async () => {}
 

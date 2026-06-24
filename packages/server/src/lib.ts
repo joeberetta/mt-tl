@@ -3,6 +3,7 @@
 // which wraps it. Env-free and side-effect-free: the caller builds an MTProtoConfig.
 export { bootstrap, type BootstrapOptions, type ForwardHandler, type UpdatePublish } from './bootstrap.js'
 export { buildGateway, type Gateway, type BuildOptions } from './gateway.js'
+export type { OnInitConnection, InitConnectionInfo } from './dispatch/dispatcher.js'
 export { type MTProtoConfig } from './config.js'
 export { InProcessForwarder } from './dispatch/forwarders/in-process.js'
 export {

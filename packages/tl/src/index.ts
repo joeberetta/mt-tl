@@ -14,6 +14,13 @@ export * from './logger.js'
 // snapshots from THEIR `.tl` schema.
 export { generateSchemaTs, writeSchemaTs } from './codegen/gen-types.js'
 export { freezeLayer, type FreezeResult } from './tools/freeze-layer.js'
+// Frozen-snapshot filename helpers (default prefix `scheme_`). Shared by the
+// writer (freezeLayer) and the readers (gateway, studio) so a custom prefix
+// stays consistent across packages.
+export { DEFAULT_LAYER_PREFIX, layerSnapshotName, matchLayerFile } from './tools/layer-naming.js'
+// Protocol schema helpers: the public wrapper set + the protocol name set the
+// studio docs subtract. Shared so server/studio agree on what "protocol" is.
+export { PROTOCOL_WRAPPERS, protocolDefNames } from './tools/protocol.js'
 // Layer-aware API spec (api.json) — the input @mt-tl/studio renders into an
 // interactive doc + playground. Built from the frozen per-layer snapshots.
 export {

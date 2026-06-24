@@ -36,6 +36,18 @@ npx serve ./site                # browse http://localhost:3000
 
 That's a complete, self-contained doc site. Host `./site` on any static host.
 
+> Snapshots frozen with a custom `--prefix` (e.g. `layer_<N>.json`)? Pass the same
+> `--prefix layer_` to `build` so Studio discovers them.
+
+> Overrode the protocol schema on the server (see
+> [extending the protocol](configuration.md#extending-the-protocol-schema))? Pass the
+> same `--protocol ./protocol` so the playground speaks it and the docs hide its types.
+
+The reference shows your **business API only** — the low-level MTProto plumbing
+(handshake, service messages, `vector`, `rpc_error`, …) is excluded. The public
+`initConnection`/`invokeWithLayer` wrappers stay visible. (The "try it" playground
+still loads the full protocol under the hood, so live calls work.)
+
 ## What's in the site
 
 - **Reference** — every method and type, rendered **per layer** (switch the layer and

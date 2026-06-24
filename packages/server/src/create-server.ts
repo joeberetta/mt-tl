@@ -1,5 +1,11 @@
 import type { KeyObject } from 'node:crypto'
-import { bootstrap, type MTProtoConfig, type Gateway, type UpdatePublish } from './lib.js'
+import {
+    bootstrap,
+    type MTProtoConfig,
+    type Gateway,
+    type UpdatePublish,
+    type OnInitConnection,
+} from './lib.js'
 import {
     createLogger,
     type Logger,
@@ -89,7 +95,13 @@ const noopEmitter: UpdateEmitter = { async emit() {}, async emitToAuthKey() {} }
  */
 export function createServer<RM = Record<string, RpcMethodSpec>>(
     config: MTProtoConfig,
-    opts: { registry?: RpcRegistry; migrations?: MigrationRegistry; logger?: Logger } = {},
+    opts: {
+        registry?: RpcRegistry
+        migrations?: MigrationRegistry
+        logger?: Logger
+        /** Audit/validation hook fired on `initConnection` (throw to reject). */
+        onInitConnection?: OnInitConnection
+    } = {},
 ): MtprotoServer<RM> {
     const registry = opts.registry ?? new RpcRegistry()
     const logger = opts.logger ?? createLogger({ name: config.nodeId })
@@ -125,6 +137,7 @@ export function createServer<RM = Record<string, RpcMethodSpec>>(
             gateway = await bootstrap({
                 config,
                 migrations: opts.migrations,
+                onInitConnection: opts.onInitConnection,
                 logger,
                 createForward: (publish: UpdatePublish) => {
                     // Handler-emitted updates (ctx.push) flow to the push loop for live,

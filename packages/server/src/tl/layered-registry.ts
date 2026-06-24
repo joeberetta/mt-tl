@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { TlDef } from '@mt-tl/tl'
-import { parseType } from '@mt-tl/tl'
+import { DEFAULT_LAYER_PREFIX, matchLayerFile, parseType } from '@mt-tl/tl'
 import type { TlValue } from '@mt-tl/tl'
 
 interface RawDef {
@@ -109,18 +109,18 @@ function rawToDef(raw: RawDef, kind: 'constructor' | 'method'): TlDef {
 }
 
 /**
- * Loads `scheme_<layer>.json` snapshots from a directory into a
+ * Loads `<prefix><layer>.json` snapshots from a directory into a
  * {@link LayeredRegistry}. A missing directory yields an empty registry
  * (layered encoding then disabled — the gateway falls back to single-schema).
+ * `prefix` defaults to `scheme_` and must match what the layers were frozen with.
  */
-export function loadLayeredRegistry(dir: string): LayeredRegistry {
+export function loadLayeredRegistry(dir: string, prefix = DEFAULT_LAYER_PREFIX): LayeredRegistry {
     const registry = new LayeredRegistry()
     if (!existsSync(dir)) return registry
 
     for (const file of readdirSync(dir)) {
-        const m = file.match(/_(\d+)\.json$/)
-        if (!m) continue
-        const layer = Number(m[1])
+        const layer = matchLayerFile(file, prefix, 'json')
+        if (layer === null) continue
         const raw = JSON.parse(readFileSync(join(dir, file), 'utf-8')) as RawSchema
         const defs = [
             ...raw.constructors.map(c => rawToDef(c, 'constructor')),

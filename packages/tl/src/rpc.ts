@@ -30,6 +30,14 @@ export interface RpcContext {
     appVersion?: string
     /** `initConnection.lang_code`, if reported. */
     langCode?: string
+    /**
+     * The FULL `initConnection` fields (minus `_`/`query`) as tagged JSON (same
+     * convention as {@link RpcRequest.params}), if the client sent one. The escape
+     * hatch for CUSTOM fields added by an overridden protocol schema —
+     * `apiId`/`deviceModel`/… above are just the standard ones pre-extracted. Also
+     * persisted to the auth key's meta.
+     */
+    initParams?: Record<string, unknown>
     /** Client IP (from the carrier / `X-Forwarded-For`), if known. */
     ip?: string
 }
