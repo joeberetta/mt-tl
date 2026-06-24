@@ -1,16 +1,18 @@
 name: Publish packages to npm
 
-# Publishes the public workspaces (@mt-tl/tl, @mt-tl/server, @mt-tl/testing) when
-# you push a version tag, e.g.:
+# Publishes the public workspaces (@mt-tl/tl, @mt-tl/server, @mt-tl/testing,
+# @mt-tl/studio) when you push a version tag, e.g.:
 #   bump versions in packages/*/package.json → git tag v0.1.2 → git push --tags
 # Or run it by hand from the Actions tab (workflow_dispatch).
 #
 # AUTH: npm "trusted publishing" (OIDC) — no token, no secret. One-time, ON NPM,
 # configure a Trusted Publisher PER package (@mt-tl/tl, @mt-tl/server,
-# @mt-tl/testing): npmjs.com → the package → Settings → Trusted Publisher → GitHub
-# Actions → repo `joeberetta/mt-tl`, workflow file `release.yml`. NB: a package
-# that has never been published yet can't get a trusted publisher — do its first
-# publish once with a token, after which it goes tokenless like the rest.
+# @mt-tl/testing, @mt-tl/studio): npmjs.com → the package → Settings → Trusted
+# Publisher → GitHub Actions → repo `joeberetta/mt-tl`, workflow file `release.yml`.
+# NB: a package that has never been published yet can't get a trusted publisher —
+# do its first publish once with a token, after which it goes tokenless like the
+# rest. (@mt-tl/studio is new: do its one-time manual first publish before the next
+# tag, or this job will fail on the studio step until its trusted publisher exists.)
 on:
     push:
         tags: ['v*']
@@ -43,7 +45,7 @@ jobs:
 
             # Publish via the npm CLI, because npm's OIDC trusted publishing (tokenless)
             # is an npm-CLI feature — Yarn's own publisher only auths by token. For each
-            # package (in prod-dep order tl → server → testing) we `yarn pack` it (which
+            # package (in prod-dep order tl → server → testing → studio) we `yarn pack` it (which
             # rewrites workspace:* deps to real versions AND runs prepack → builds dist),
             # then hand the tarball to `npm publish`, which does the OIDC exchange against
             # that package's configured trusted publisher. Versions already on npm are
@@ -53,7 +55,7 @@ jobs:
             - name: Publish (OIDC trusted publishing)
               run: |
                   set -euo pipefail
-                  for pkg in tl server testing; do
+                  for pkg in tl server testing studio; do
                       name="@mt-tl/$pkg"
                       ver="$(node -p "require('./packages/$pkg/package.json').version")"
                       if npm view "$name@$ver" version >/dev/null 2>&1; then

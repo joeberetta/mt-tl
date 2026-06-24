@@ -26,19 +26,19 @@ for codegen) — the protocol engine + handler layer are folded inside
 | [`packages/server`](packages/server)                       | **`@mt-tl/server`** — what you install: `createServer`, routes, plugins, hooks, `ctx.push`, `createUpdatePublisher` — and the whole protocol engine + handler layer folded in. |
 | [`packages/tl`](packages/tl)                               | **`@mt-tl/tl`** — TL tooling: the type generator (`gen:types`), generic wire codec, migrations, and the bundled MTProto **protocol** schema.                                   |
 | [`packages/testing`](packages/testing)                     | **`@mt-tl/testing`** — e2e test tooling: an in-process server harness, a real handshaking client, multi-user sessions, and a YAML scenario runner (`mtproto-test`).            |
+| [`packages/studio`](packages/studio)                       | **`@mt-tl/studio`** — "Swagger/Redoc for MTProto": a CLI (`mt-tl-studio`) that turns your `.tl` layers into a static doc site with a layer-aware reference + a live try-it playground. |
 | [`examples/demo-eos-seed-app`](examples/demo-eos-seed-app) | A complete consumer app (EOS-seed auth + main-screen methods). Owns its schema, config, deploy files. **Copy it.**                                                               |
 
 ## Where to go
 
-- **Building an app on the framework?** → **[docs/guide/](docs/guide/)**, starting
-  with the **[5-minute start](docs/guide/getting-started.md)**, then
-  **[core concepts](docs/guide/core-concepts.md)**. The runnable example is
-  [`examples/demo-eos-seed-app`](examples/demo-eos-seed-app/) — its README is the
-  self-contained "run / develop / deploy this app".
+- **Building an app on the framework?** → **[the docs](docs/README.md)** are a single
+  path, beginner to production: start at the **[introduction](docs/README.md)**, then
+  **[the packages](docs/guide/packages.md)** and **[how it works](docs/guide/core-concepts.md)**,
+  then build. The runnable example is [`examples/demo-eos-seed-app`](examples/demo-eos-seed-app/) —
+  its README is the self-contained "run / develop / deploy this app".
 - **Maintaining the framework itself?** → **[docs/internals/](docs/internals/)** —
-  [architecture](docs/internals/architecture.md), [protocol compliance](docs/internals/protocol-compliance.md),
-  [the msg_key v1 quirk](docs/internals/msgkey-v1-quirk.md).
-- Full index: **[docs/README.md](docs/README.md)**.
+  [architecture](docs/internals/architecture.md) and
+  [protocol compliance](docs/internals/protocol-compliance.md).
 
 ## Repo tasks
 

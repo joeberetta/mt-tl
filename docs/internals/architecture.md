@@ -227,6 +227,8 @@ AES-IGE, msg_key derivation, salt math, constructor ids), pinned by known-answer
 tests captured from the old libs. Existing clients pin a server RSA key — set
 `RSA_PRIVATE_KEY_PATH` to the production PEM so the advertised fingerprint matches.
 
-One real-client quirk (MTProto v1 `msg_key` over a v2 session) and the
-`disableMsgKeyCheck` interop shim are written up in
-[mtproto-v1-msgkey-bug-report.md](msgkey-v1-quirk.md).
+One known real-client quirk — a mobile client computing `msg_key` with the MTProto
+**1.0** scheme over a 2.0 session — is handled by the opt-in `disableMsgKeyCheck`
+shim (insecure; off by default). See
+[protocol compliance → escape hatches](protocol-compliance.md#opt-in-escape-hatches-secure-by-default)
+and [configuration](../guide/configuration.md#escape-hatches-secure-by-default).

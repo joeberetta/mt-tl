@@ -74,7 +74,8 @@ yarn workspace demo-eos-seed-app run test
 `test/demo-app.test.ts` builds the routes with `buildDemoApp(...)` and dispatches
 directly (no transport, no crypto). The full-stack crypto e2e — real client →
 engine → these handlers — lives in `@mt-tl/server`
-(`packages/server/test/demo-auth.e2e.test.ts`).
+(`packages/server/test/demo-auth.e2e.test.ts`). Both approaches are explained in
+[testing](testing.md).
 
 ## Make it yours
 
@@ -82,3 +83,7 @@ Copy the directory, drop your `.tl` into `schema/`, run `yarn gen:types`, and
 replace the modules and plugins with yours. The wiring (`config.ts`,
 `framework.ts`, `app.ts`, `main.ts`) stays almost identical — that's the point of
 copying it.
+
+---
+
+See also: [methods, context & errors](adding-methods.md) · [configuration](configuration.md) · [deployment & scaling](deployment.md).

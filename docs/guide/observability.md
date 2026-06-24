@@ -136,3 +136,7 @@ not in prod.
 | `LOG_ERROR_STACK` | pretty:on json:off | Force `Error.stack` on/off.        |
 | `NO_COLOR`        | unset              | Set (any value) to disable color.  |
 | `FORCE_COLOR`     | unset              | Set to force color (non-TTY).      |
+
+---
+
+**Next:** [production checklist →](production-checklist.md)

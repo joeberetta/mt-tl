@@ -1,63 +1,75 @@
-# Releasing a version
+# Schema versions & layers
 
-In MTProto, a client's "version" is its **TL layer**. Shipping new methods or
-changing existing ones means evolving your `.tl` schema and, when you ship, you
-**freeze a layer** so older clients keep getting bytes they can decode. This guide
-covers the schema lifecycle and rolling out a new build.
+In MTProto a client's "version" is its **TL layer** — and that's what lets a
+five-year-old app and yesterday's build talk to the same server. This page explains
+what a layer is, then the schema lifecycle: edit, regenerate, freeze, migrate, ship.
+
+## What a layer is
+
+Your `.tl` schema is the contract: every type and method has a constructor id baked
+from its definition. As you add fields and methods over time, that contract evolves.
+A **layer** is a numbered, frozen snapshot of the contract at a point in time. When a
+client connects it announces the layer it was built against (`invokeWithLayer(N)`),
+and the server **encodes its replies using that layer's shape** — so an old client
+keeps receiving bytes it can decode, even after you've moved on.
+
+Two facts make this manageable:
+
+- **Decoding is layer-agnostic.** The wire constructor id is unambiguous, so the
+  server can always _read_ what any client sends.
+- **Only encoding is layer-aware.** The server floors a client's announced layer to
+  the nearest frozen snapshot and writes that layer's ids/fields.
+
+So your job when shipping is: keep one working schema, and **freeze a snapshot each
+time you ship a layer**. Your handlers always see the newest shape.
 
 ## 1. Edit the schema, regenerate types
 
-Your app owns its `.tl` (in `schema/`). Add/change a constructor or method, then:
+Your app owns its `.tl` (in `schema/`). Add or change a constructor or method, then:
 
 ```bash
-yarn workspace demo-eos-seed-app run gen:types
+npx mt-tl gen-types ./schema ./src/generated/schema.ts
 ```
 
-This regenerates `src/generated/schema.ts` (the `RpcMethods` map + interfaces).
-Your handlers get the new typed `params`/`result` immediately. The `.tl` is always
-the **newest, in-progress** layer.
+This regenerates the `RpcMethods` map + interfaces; your handlers get the new typed
+`params`/`result` immediately. The `.tl` is always the **newest, in-progress** layer.
 
-> The CRC32 of each line must match its declared `#id`. The parser validates this
-> on load (warns on mismatch). 17 of the vendored constructors have benign
-> historical mismatches — the codec uses the **declared** ids (what clients pin),
-> so don't "fix" them; that would break wire-compat.
+> Each line's CRC32 must match its declared `#id`; the parser validates this on load
+> (warns on mismatch). Some vendored protocol constructors have benign historical
+> mismatches — the codec uses the **declared** ids (what clients pin), so don't "fix"
+> them; that would break wire-compat.
 
 ## 2. Freeze a layer when you ship one
 
-Decode is **layer-agnostic** (the wire constructor id is unambiguous). Only result
-_encoding_ is layer-specific: the gateway floors a client's negotiated layer to the
-nearest **frozen snapshot** and writes that layer's ids/fields. So when you ship a
-layer, snapshot it:
+When you ship a layer, snapshot it:
 
 ```bash
-yarn workspace demo-eos-seed-app run freeze 205
-# → schema/layers/scheme_205.json   (the IR snapshot the gateway loads)
+npx mt-tl freeze ./schema ./schema/layers 205
+# → schema/layers/scheme_205.json   (the snapshot the server loads)
 # → schema/layers/scheme_205.tl     (human-readable mirror — for inspection/diffs)
 ```
 
-The `.json` is what the gateway loads; the `.tl` is a readable mirror (not loaded)
-so you can eyeball or diff a frozen layer.
+The `.json` is what the server loads for layered encoding; the `.tl` is a readable
+mirror (not loaded). The layer number is the **filename** (`scheme_205.json` → 205),
+not the file contents. `defaultLayer` in your config is only the fallback for a
+connection that hasn't announced one — not "the schema version".
 
 Then the `.tl` keeps evolving toward 206. **Always freeze the newest shipped layer
-too** — otherwise a type that changed in it would encode with a stale id for
-clients on that layer. The layer number is the **filename** (`scheme_205.json`
-→ 205), not the file contents. `DEFAULT_LAYER` is only the fallback for a connection
-that hasn't sent `invokeWithLayer` — not "the schema version".
+too** — otherwise a type that changed in it would encode with a stale id for clients
+on that layer. Snapshots must be **identical across all instances**.
 
-Snapshots must be **identical across all gateway instances**.
+## 3. Breaking field changes → migration ladders {#migration-ladders}
 
-## 3. Breaking field changes → migration ladders
+A frozen layer handles types that only _gained_ fields. But if a field is **removed
+or its type changes** between layers (e.g. `phone: string` became
+`phones: Vector<string>`), the _shape_ differs — a `MigrationRegistry` bridges it so
+your handlers never branch on layer.
 
-A frozen layer id handles types that only _gained_ fields. But if a field is
-**removed or its type changes** between layers (e.g. `phone:string` became
-`phones:Vector<string>`), the _shape_ differs — a `MigrationRegistry` bridges it.
-
-You write a **ladder** per changed predicate: one **rung** per version, ordered by
-the layer it was introduced (`since`). Each rung (except the newest) has `up`
-(this shape → next) and `down` (next → this). The gateway applies `up` on **input**
-(client → canonical) and `down` on **output** (canonical → client's layer), so your
-**handlers only ever see the newest (canonical) shape** — they never branch on
-layer. Adding a version = appending one rung; the existing rungs don't change.
+You write a **ladder** per changed predicate: one **rung** per version, ordered by the
+layer it was introduced (`since`). Each rung (except the newest) has `up` (this shape
+→ next) and `down` (next → this). The server applies `up` on **input** (client →
+canonical) and `down` on **output** (canonical → client's layer), so your **handlers
+only ever see the newest (canonical) shape**. Adding a version = appending one rung.
 
 ```ts
 // migrations.ts
@@ -75,28 +87,24 @@ export const migrations = new MigrationRegistry().register('user', [
 ])
 ```
 
-Pass it to the server (it's applied around every handler automatically):
+Pass it to the server (applied around every handler automatically):
 
 ```ts
-createServer(config, { migrations }).register(demoApp, { … })
+createServer(config, { migrations }).register(demoApp, { /* … */ })
 ```
 
 A handler now always sees `user.phones: string[]`. A client on layer 180 sends
-`phone` (→ `up` makes `phones`) and gets `phone` back (← `down` from `phones`); a
-layer-205 client sends/gets `phones`. Only predicates that changed
-non-additively need a ladder — everything else is handled by decode-union +
-layered-encode with no rungs. (Engine: `@mt-tl/tl`'s `MigrationRegistry`.)
+`phone` (→ `up` makes `phones`) and gets `phone` back (← `down`); a layer-205 client
+sends/gets `phones`. Only predicates that changed _non-additively_ need a ladder —
+everything else is handled by decode + layered-encode with no rungs.
 
 ## 4. Roll out the new build
 
-A "new version" deploy is just shipping the new code + frozen snapshots. Redeploy
-your `serve` replicas behind the load balancer; state is shared in Mongo/Redis, so
-rolling restarts are safe — drain a node by stopping new connections and letting
-in-flight ones finish.
-
-Make sure every replica has the **same** `schema/` + `schema/layers/`. See
-[deployment.md](deployment.md) for scaling and the wire-compat RSA key requirement.
+A "new version" deploy is just shipping the new code + frozen snapshots. Redeploy your
+`serve` replicas behind the load balancer; state is shared in Mongo/Redis, so rolling
+restarts are safe — drain a node by stopping new connections and letting in-flight
+ones finish. Make sure **every replica has the same `schema/` + `schema/layers/`**.
 
 ---
 
-Next: [deployment.md](deployment.md) for the rollout topologies in detail.
+**Next:** [deployment & scaling →](deployment.md)

@@ -57,26 +57,28 @@ describe('codec — primitive and structural round-trips', () => {
     })
 
     it('round-trips optional (flags) fields present and absent', () => {
+        // initConnection (canonical #c1cd5ea9) carries an optional `params:flags.1?JSONValue`.
         const present: TlObject = {
             _: 'initConnection',
             api_id: 42,
-            api_hash: 'secret',
             device_model: 'pc',
             system_version: '1',
             app_version: '1',
             system_lang_code: 'en',
             lang_pack: '',
             lang_code: 'en',
+            params: { _: 'jsonString', value: 'secret' },
             query: { _: 'help.getServerConfig' },
         }
         const d1 = codec.decode(codec.encode(present)) as TlObject
-        expect(d1.api_hash).toBe('secret')
+        expect((d1.params as TlObject)._).toBe('jsonString')
+        expect((d1.params as TlObject).value).toBe('secret')
         expect((d1.query as TlObject)._).toBe('help.getServerConfig')
 
         const absent: TlObject = { ...present }
-        delete (absent as Record<string, unknown>).api_hash
+        delete (absent as Record<string, unknown>).params
         const d2 = codec.decode(codec.encode(absent)) as TlObject
-        expect(d2.api_hash).toBeUndefined()
+        expect(d2.params).toBeUndefined()
     })
 })
 

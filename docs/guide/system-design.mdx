@@ -1,0 +1,74 @@
+import SystemDesign from '@site/src/components/SystemDesign'
+
+# System design at scale
+
+This is the bird's-eye view of a production `@mt-tl/server` deployment: how
+clients, the edge, your replicas, and shared state fit together, and how a
+request and a server-push actually flow through it.
+
+The defining choice is **in-process**: there is no broker between the gateway
+and your methods. The MTProto engine (transport, crypto, sessions, dispatch,
+layered TL) and **your handlers** run in the **same** process — a request is a
+direct call (`InProcessForwarder`), not a queue hop. You scale by running more
+**uniform replicas** behind a load balancer, with all shared state in **Mongo +
+Redis**, so any replica serves any client.
+
+> Hover any node — or a step in the bottom panels — to trace it across the
+> diagram. Click any box to jump to the section that explains it.
+
+<SystemDesign />
+
+## How to read it
+
+- **Clients → edge.** Mobile/desktop speak raw-TCP MTProto, web speaks MTProto
+  over WebSocket. A load balancer fans them across replicas. There is **no
+  per-layer routing at the edge** — the TL layer is negotiated _inside_ the
+  encrypted stream, so every replica is interchangeable. Behind a proxy, set
+  `trustProxy` and forward `X-Forwarded-For` (WS) or the PROXY protocol header
+  (raw TCP) so `ctx.request.ip` is the real client. See
+  [deployment](deployment.md).
+
+- **Replica fleet.** Each replica is one process holding the whole stack:
+  transport/framing → crypto/handshake → sessions → dispatcher → TL codec +
+  `LayeredRegistry` → **your handlers** → updates. One stable `NODE_ID` per
+  replica (the presence routing key). The internals are written up in
+  [architecture](../internals/architecture.md).
+
+- **Shared state.** Mongo holds the three engine collections (`authKeys`,
+  `serverSalts`, `sessions`) — durable, and **required** for more than one
+  replica. Redis holds presence (`presence:{subject} → nodeId`, TTL-refreshed)
+  and the update pub/sub bus. Your app's own business data lives in stores **you**
+  own, separate from these.
+
+- **Request lifecycle.** Bytes are framed and decrypted, the session is ensured,
+  the dispatcher unwraps containers/gzip and splits service messages from
+  business methods, the business call runs in-process and returns a result plus
+  session effects, and the reply is re-encrypted **at the client's negotiated
+  layer**. See [adding methods](adding-methods.md) and
+  [sessions & auth](sessions-auth.md).
+
+- **Server-push.** A handler calls `ctx.push` (or another process uses
+  `createUpdatePublisher`); the update goes onto the Redis bus, the router looks
+  up presence and forwards **only to the nodes holding that user**, and each node
+  renders the update per connection layer. Live push is best-effort — if Redis is
+  down the client recovers through your app's `getDifference` (pts).
+
+## Scaling checklist
+
+Everything the fleet needs to stay uniform:
+
+| Concern   | Requirement                                                                 |
+| --------- | --------------------------------------------------------------------------- |
+| `NODE_ID` | unique & stable per replica (presence routing key) — use the pod/hostname.  |
+| Storage   | `STORAGE_BACKEND=mongo` (shared) — never `memory` across replicas.          |
+| RSA key   | the **same** production PEM on every replica (clients pin its fingerprint). |
+| Schema    | identical `schema/` + `schema/layers/` on every replica.                    |
+| Updates   | `UPDATES_ENABLED=true` + a shared `REDIS_URL` across all replicas.          |
+
+The full operational story — Docker compose, `--scale`, failure modes, graceful
+draining — lives in [deployment](deployment.md). For the engine internals behind
+each box, see [architecture](../internals/architecture.md).
+
+---
+
+**Next:** [observability →](observability.md)

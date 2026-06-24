@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { writeFileSync } from 'node:fs'
 import { writeSchemaTs } from './codegen/gen-types.js'
 import { freezeLayer } from './tools/freeze-layer.js'
+import { buildApiSpec } from './spec.js'
 
 const USAGE = `mt-tl — TL tooling
 
@@ -10,6 +12,10 @@ Usage:
 
   mt-tl freeze <schemaDir> <outDir> <layer>
       Freeze the current schema into a per-layer snapshot (scheme_<layer>.json + .tl).
+
+  mt-tl spec <layersDir> <outFile>
+      Build a layer-aware API spec (api.json) from the frozen layer snapshots —
+      the input @mt-tl/studio renders into an interactive doc + playground.
 `
 
 function fail(msg: string): never {
@@ -36,6 +42,19 @@ switch (cmd) {
             `Froze layer ${layer}: ${res.constructors} constructors, ${res.methods} methods → ${res.out}`,
         )
         if (res.crcWarnings) console.warn(`  (${res.crcWarnings} CRC warnings)`)
+        break
+    }
+    case 'spec': {
+        const [layersDir, outFile] = args
+        if (!layersDir || !outFile) fail('spec requires <layersDir> <outFile>')
+        const spec = buildApiSpec(layersDir)
+        writeFileSync(outFile, JSON.stringify(spec, null, 2))
+        console.log(
+            `Built spec: ${Object.keys(spec.methods).length} methods, ` +
+                `${Object.keys(spec.constructors).length} constructors, ` +
+                `${Object.keys(spec.types).length} types across layers ` +
+                `${spec.layers.join(', ') || '(none)'} → ${outFile}`,
+        )
         break
     }
     case undefined:

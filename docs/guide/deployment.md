@@ -89,6 +89,10 @@ load balancer.
            └───────────────┴── Redis (presence + update pub/sub) ──┘
 ```
 
+> For the interactive, click-through version of this whole picture — edge, the
+> in-process replica stack, shared state, and the request/server-push flows — see
+> [system design at scale](system-design.mdx).
+
 ### What to set for a fleet
 
 | Concern   | Requirement                                                                 |
@@ -154,11 +158,10 @@ and a PROXY header are spoofable by a client that reaches the server unfronted.
 
 ---
 
-## Operational checklist
+The full go-live list — identity, state, schema, push, edge, observability,
+lifecycle — is the [production checklist](production-checklist.md). Every config field
+referenced above is in the [configuration reference](configuration.md).
 
-- [ ] Same production RSA PEM on every replica; verify the advertised fingerprint
-      matches what clients pin.
-- [ ] `STORAGE_BACKEND=mongo` with a shared cluster for more than one replica.
-- [ ] Unique `NODE_ID` per replica.
-- [ ] Identical `schema/` + `schema/layers/` across all replicas.
-- [ ] `UPDATES_ENABLED=true` + a shared `REDIS_URL` when server-push is on.
+---
+
+**Next:** [system design at scale →](system-design.mdx)

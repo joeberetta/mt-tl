@@ -137,7 +137,7 @@ vector#1cb5c415 {t:Type} # [ t ] = Vector t;
 
 ---functions---
 
-initConnection#7d7f18cf {X:Type} flags:# api_id:int api_hash:flags.1?string device_model:string system_version:string app_version:string system_lang_code:string lang_pack:string lang_code:string proxy:flags.0?InputClientProxy query:!X = X;
+initConnection#c1cd5ea9 {X:Type} flags:# api_id:int device_model:string system_version:string app_version:string system_lang_code:string lang_pack:string lang_code:string proxy:flags.0?InputClientProxy params:flags.1?JSONValue query:!X = X;
 invokeAfterMsg#cb9f372d {X:Type} msg_id:long query:!X = X;
 invokeAfterMsgs#3dc4b4f0 {X:Type} msg_ids:Vector<long> query:!X = X;
 invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;

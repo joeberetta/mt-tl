@@ -62,8 +62,8 @@ const config: Config = {
                 {
                     title: 'Docs',
                     items: [
-                        { label: 'Getting started', to: '/guide/getting-started' },
-                        { label: 'Core concepts', to: '/guide/core-concepts' },
+                        { label: 'Your first server', to: '/guide/getting-started' },
+                        { label: 'How it works', to: '/guide/core-concepts' },
                         { label: 'Deployment', to: '/guide/deployment' },
                     ],
                 },
