@@ -1,6 +1,6 @@
 {
     "name": "@mt-tl/testing",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "type": "module",
     "description": "End-to-end test tooling for MTProto servers built on @mt-tl/server: an in-process server harness, a real handshaking client (typed auto-unwrapping invoke, expectUpdate), multi-user sessions (per-user layer + anonymous), and a YAML scenario CLI (mtproto-test) with directory CI runs, schema autocomplete, linting, and type generation.",
     "license": "MIT",

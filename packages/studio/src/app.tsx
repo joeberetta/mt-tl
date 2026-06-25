@@ -237,10 +237,11 @@ function TopBar({ spec, onToggleNav }: { spec: ApiSpec; onToggleNav: () => void 
 }
 
 // v2 semantics: stores the group keys whose open/closed state is FLIPPED from the
-// default. Method groups (`m:<ns>`) default to COLLAPSED — a big schema has dozens of
-// namespaces; everything else (tools/reference/guides/types) defaults to expanded.
+// default. Method groups (`m:<ns>`) and the `types` group default to COLLAPSED — a big
+// schema has dozens of namespaces and hundreds of types; tools/reference/guides default
+// to expanded.
 const NAV_LS = 'mt-tl-studio.navState'
-const defaultOpen = (key: string): boolean => !key.startsWith('m:')
+const defaultOpen = (key: string): boolean => !key.startsWith('m:') && key !== 'types'
 
 function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenario[]; route: string }) {
     // Reflects the SELECTED layer's surface (symbols not present at that layer are
@@ -382,6 +383,7 @@ function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenari
                             {t.name}
                         </NavLink>
                     )),
+                    types.length,
                 )}
             {ql && methodGroups.size === 0 && types.length === 0 && guides.length === 0 && (
                 <div className="muted" style={{ padding: '8px 16px', fontSize: 12 }}>no matches</div>

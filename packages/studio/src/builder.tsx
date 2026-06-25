@@ -129,6 +129,8 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     const [steps, setSteps] = useState<Step[]>(initial?.steps?.length ? initial.steps : [emptyStep('user', nid)])
     const [results, setResults] = useState<Record<number, RunResult>>({})
     const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+    // Step ids whose response-log detail is EXPANDED (default empty = all collapsed).
+    const [openResults, setOpenResults] = useState<Set<number>>(new Set())
     const [running, setRunning] = useState(false)
     const [log, setLog] = useState<LogLine[]>([])
     const [importErr, setImportErr] = useState<string>()
@@ -178,6 +180,15 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     }, [name, vars, users, steps])
 
     const methodNames = useMemo(() => Object.keys(spec.methods).sort(), [spec])
+    // `users:` is a YAML map — names MUST be unique (testing's yaml.parse throws on dup keys).
+    // Two same-named rows also make `as` ambiguous (sessions are keyed by name), so flag them
+    // and block run/export until renamed.
+    const dupNames = useMemo(() => {
+        const counts = new Map<string, number>()
+        for (const u of users) counts.set(u.name, (counts.get(u.name) ?? 0) + 1)
+        return new Set([...counts].filter(([, n]) => n > 1).map(([n]) => n))
+    }, [users])
+    const hasDupUsers = dupNames.size > 0
     // Live preview / editable pane shows real `with` values; the export/share artifact masks them.
     const yaml = useMemo(() => toYaml({ url, vars, users, steps }), [url, vars, users, steps])
     const maskedYaml = useMemo(() => toYaml({ url, vars, users, steps }, true), [url, vars, users, steps])
@@ -209,6 +220,34 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
             n.has(id) ? n.delete(id) : n.add(id)
             return n
         })
+    const toggleResult = (id: number): void =>
+        setOpenResults(s => {
+            const n = new Set(s)
+            n.has(id) ? n.delete(id) : n.add(id)
+            return n
+        })
+    // Collapse/expand ALL main step CARDS at once (nested login steps keep their own).
+    const allStepsCollapsed = steps.length > 0 && steps.every(s => collapsed.has(s.id))
+    const toggleAllSteps = (): void =>
+        setCollapsed(c => {
+            const n = new Set(c)
+            if (steps.every(s => n.has(s.id))) for (const s of steps) n.delete(s.id)
+            else for (const s of steps) n.add(s.id)
+            return n
+        })
+    // Collapse/expand ALL response logs (the per-step result payloads, default collapsed).
+    const resultIds = Object.entries(results)
+        .filter(([, r]) => r.detail)
+        .map(([k]) => Number(k))
+    const allLogsCollapsed = !resultIds.some(id => openResults.has(id))
+
+    // Renaming a user must follow through to every step that runs `as` it (and the
+    // step's `as` dropdown), otherwise those steps point at a now-missing user.
+    const renameUser = (i: number, newName: string): void => {
+        const old = users[i]?.name
+        setUsers(us => us.map((x, j) => (j === i ? { ...x, name: newName } : x)))
+        if (old && old !== newName) setSteps(ss => ss.map(st => (st.as === old ? { ...st, as: newName } : st)))
+    }
 
     const applyParsed = (r: Parsed): void => {
         if (r.vars !== undefined) setVars(r.vars)
@@ -360,8 +399,9 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                 <input value={name} onChange={e => setName(e.target.value)} style={{ width: 160 }} aria-label="scenario name" />
                 <span className="id">target {url}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                    <button onClick={run} disabled={running || !pem} title={pem ? '' : 'set the server URL + key in the bar above'}
-                        style={pem ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined}>
+                    <button onClick={run} disabled={running || !pem || hasDupUsers}
+                        title={hasDupUsers ? 'fix duplicate user names first' : pem ? '' : 'set the server URL + key in the bar above'}
+                        style={pem && !hasDupUsers ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined}>
                         <Icon name={running ? 'loader-2' : 'player-play'} /> run
                     </button>
                     <button onClick={() => fileRef.current?.click()} title="import an mt-tl-test scenario YAML">
@@ -377,10 +417,10 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                             e.target.value = ''
                         }}
                     />
-                    <button onClick={exportYaml}>
+                    <button onClick={exportYaml} disabled={hasDupUsers} title={hasDupUsers ? 'fix duplicate user names — the export would be invalid YAML' : ''}>
                         <Icon name="download" /> .yaml
                     </button>
-                    <button onClick={share} title="copy a shareable link to this scenario">
+                    <button onClick={share} disabled={hasDupUsers} title={hasDupUsers ? 'fix duplicate user names first' : 'copy a shareable link to this scenario'}>
                         <Icon name={shared ? 'check' : 'link'} /> {shared ? 'copied' : 'share'}
                     </button>
                     <button onClick={clearScenario} title="drop the current scenario" style={{ color: 'var(--danger)' }}>
@@ -391,6 +431,12 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
             {!pem && (
                 <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
                     set the server URL + public key in the connection bar above to run · import/export work offline
+                </div>
+            )}
+            {hasDupUsers && (
+                <div className="callout danger">
+                    duplicate user name{dupNames.size > 1 ? 's' : ''}: {[...dupNames].map(n => `"${n}"`).join(', ')} — user names must be unique
+                    (<code>users</code> is a YAML map). Rename to run/export.
                 </div>
             )}
             {importErr && <div className="callout danger">import failed — {importErr}</div>}
@@ -421,12 +467,40 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                 />
             </div>
 
-            <Users users={users} setUsers={setUsers} spec={spec} methodNames={methodNames} ready={ready} results={results} />
+            <Users
+                users={users}
+                setUsers={setUsers}
+                renameUser={renameUser}
+                dupNames={dupNames}
+                spec={spec}
+                methodNames={methodNames}
+                ready={ready}
+                results={results}
+                collapsed={collapsed}
+                onToggleCollapse={toggleCollapse}
+                openResults={openResults}
+                onToggleResult={toggleResult}
+            />
 
             <div className="builder-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
                 <div>
-                    <div className="muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.04em', margin: '6px 0' }}>
-                        steps
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '6px 0', flexWrap: 'wrap' }}>
+                        <span className="muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.04em' }}>steps</span>
+                        {steps.length > 1 && (
+                            <button onClick={toggleAllSteps} className="iconbtn" style={{ width: 'auto', padding: '2px 8px', fontSize: 12 }} title="collapse/expand every step">
+                                <Icon name={allStepsCollapsed ? 'chevron-right' : 'chevron-down'} /> {allStepsCollapsed ? 'expand all' : 'collapse all'}
+                            </button>
+                        )}
+                        {resultIds.length > 0 && (
+                            <label className="muted" style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }} title="collapse/expand every response log">
+                                <input
+                                    type="checkbox"
+                                    checked={allLogsCollapsed}
+                                    onChange={e => setOpenResults(e.target.checked ? new Set() : new Set(resultIds))}
+                                />
+                                collapse logs
+                            </label>
+                        )}
                     </div>
                     {steps.map((st, i) => (
                         <StepCard
@@ -439,6 +513,8 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                             res={results[st.id]}
                             collapsed={collapsed.has(st.id)}
                             onToggle={() => toggleCollapse(st.id)}
+                            resultOpen={openResults.has(st.id)}
+                            onToggleResult={() => toggleResult(st.id)}
                             patch={patch}
                             move={move}
                             remove={() => setSteps(s => s.filter(x => x.id !== st.id))}
@@ -519,17 +595,29 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
 function Users({
     users,
     setUsers,
+    renameUser,
+    dupNames,
     spec,
     methodNames,
     ready,
     results,
+    collapsed,
+    onToggleCollapse,
+    openResults,
+    onToggleResult,
 }: {
     users: User[]
     setUsers: (f: (u: User[]) => User[]) => void
+    renameUser: (i: number, name: string) => void
+    dupNames: Set<string>
     spec: ApiSpec
     methodNames: string[]
     ready: boolean
     results: Record<number, RunResult>
+    collapsed: Set<number>
+    onToggleCollapse: (id: number) => void
+    openResults: Set<number>
+    onToggleResult: (id: number) => void
 }) {
     const layers = [...spec.layers].reverse()
     const recipes = listRecipes()
@@ -555,8 +643,9 @@ function Users({
                         <input
                             value={u.name}
                             placeholder="name"
-                            onChange={e => patchUser(i, { name: e.target.value })}
-                            style={{ width: 130 }}
+                            onChange={e => renameUser(i, e.target.value)}
+                            title={dupNames.has(u.name) ? 'duplicate user name — must be unique' : ''}
+                            style={{ width: 130, ...(dupNames.has(u.name) ? { borderColor: 'var(--danger)', color: 'var(--danger)' } : {}) }}
                         />
                         <label className="muted" style={{ fontSize: 12 }}>
                             layer
@@ -614,10 +703,11 @@ function Users({
                                     methodNames={methodNames}
                                     ready={ready}
                                     res={results[as.id]}
-                                    collapsed={false}
+                                    collapsed={collapsed.has(as.id)}
                                     hideAs
-                                    hideCollapse
-                                    onToggle={() => {}}
+                                    onToggle={() => onToggleCollapse(as.id)}
+                                    resultOpen={openResults.has(as.id)}
+                                    onToggleResult={() => onToggleResult(as.id)}
                                     patch={(id, p) => setAuthSteps(i, s => s.map(x => (x.id === id ? { ...x, ...p } : x)))}
                                     move={(id, d) =>
                                         setAuthSteps(i, s => {
@@ -655,11 +745,12 @@ function StepCard({
     res,
     collapsed,
     onToggle,
+    resultOpen,
+    onToggleResult,
     patch,
     move,
     remove,
     hideAs = false,
-    hideCollapse = false,
 }: {
     st: Step
     index: number
@@ -669,28 +760,28 @@ function StepCard({
     res?: RunResult
     collapsed: boolean
     onToggle: () => void
+    resultOpen: boolean
+    onToggleResult: () => void
     patch: (id: number, p: Partial<Step>) => void
     move: (id: number, d: number) => void
     remove: () => void
     hideAs?: boolean
-    hideCollapse?: boolean
 }) {
     const recipes = listRecipes()
     return (
         <div className="card" style={{ marginBottom: 10 }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: collapsed ? 0 : 8, flexWrap: 'wrap' }}>
-                {!hideCollapse && (
-                    <button onClick={onToggle} aria-label="collapse" className="iconbtn" style={{ width: 26, height: 26 }}>
-                        <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} />
-                    </button>
-                )}
+                <button onClick={onToggle} aria-label="collapse" className="iconbtn" style={{ width: 26, height: 26 }}>
+                    <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} />
+                </button>
                 <span className="id">#{index + 1}</span>
                 {!hideAs && (
                     <>
                         <span className="muted" style={{ fontSize: 12 }}>as</span>
                         <select value={st.as} onChange={e => patch(st.id, { as: e.target.value })}>
-                            {userNames.map(n => (
-                                <option key={n} value={n}>
+                            {/* index keys: names can transiently collide while a dup is being fixed */}
+                            {userNames.map((n, i) => (
+                                <option key={i} value={n}>
                                     {n}
                                 </option>
                             ))}
@@ -821,7 +912,15 @@ function StepCard({
                     )}
                     {res && (
                         <div className={'result ' + (res.status === 'ok' ? 'ok' : 'err')} style={{ marginTop: 8 }}>
-                            <div className="result-head">
+                            <div
+                                className="result-head"
+                                onClick={res.detail ? onToggleResult : undefined}
+                                style={res.detail ? { cursor: 'pointer' } : undefined}
+                                title={res.detail ? (resultOpen ? 'collapse response' : 'expand response') : undefined}
+                            >
+                                {res.detail && (
+                                    <Icon name={resultOpen ? 'chevron-down' : 'chevron-right'} style={{ fontSize: 11, marginRight: 4 }} />
+                                )}
                                 <span className="mono" style={{ color: res.status === 'ok' ? 'var(--ok)' : 'var(--danger)' }}>
                                     {res.status === 'ok' ? '✓' : '✕'} {res.text}
                                 </span>
@@ -831,7 +930,7 @@ function StepCard({
                                     </span>
                                 )}
                             </div>
-                            {res.detail && (
+                            {res.detail && resultOpen && (
                                 <pre className="preview" style={{ margin: 0 }}>
                                     {res.detail}
                                 </pre>
