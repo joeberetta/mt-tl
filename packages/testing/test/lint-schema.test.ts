@@ -23,9 +23,15 @@ describe('scenario schema + lint (shipped in the package)', () => {
                 join(dir, 'bad.yaml'),
                 'target: { url: ws://x }\nsteps:\n  - { invoke: crypto.nope, paramz: {} }\n',
             )
+            // a non-blocking expectUpdate (since 0.1.8) must lint clean, not as a stray field
+            writeFileSync(
+                join(dir, 'nonblocking.yaml'),
+                'target: { url: ws://x }\nsteps:\n  - { expectUpdate: { _: updateShort }, nonBlocking: true, timeoutMs: 5000 }\n',
+            )
             const results = lintScenarios(collectScenarioFiles([dir]), schema)
             const byName = (n: string) => results.find(r => r.file.endsWith(n))!
             expect(byName('good.yaml').ok).toBe(true)
+            expect(byName('nonblocking.yaml').ok).toBe(true)
             expect(byName('bad.yaml').ok).toBe(false)
             expect(byName('bad.yaml').issues.length).toBeGreaterThan(0)
         } finally {

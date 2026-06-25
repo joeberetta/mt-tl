@@ -91,6 +91,11 @@ export function generateScenarioSchema(schemaDirs: string | string[]): object {
                         properties: { code: { type: 'integer' }, message: { type: 'string' } },
                     },
                     expectUpdate: { $ref: '#/definitions/matcher' },
+                    nonBlocking: {
+                        type: 'boolean',
+                        description:
+                            "expectUpdate only: don't block — register the expectation and proceed; it's checked after all steps run (order-independent).",
+                    },
                     capture: {
                         type: 'object',
                         additionalProperties: { type: 'string' },
