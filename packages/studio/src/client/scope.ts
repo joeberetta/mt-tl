@@ -5,17 +5,28 @@
 // Dynamic tokens (fresh each use): ${rand.long} (random positive long, e.g. a
 // sendMessage random_id), ${rand.int}, ${now} (unix s), ${now.ms}, ${uuid}.
 // Captured/var paths: ${alice.id}, ${sent.phone_code_hash}, … (dotted).
+//
+// Consumers can add their OWN tokens via `generators` (e.g. `{ mnemonic: () =>
+// generateMnemonic() }` → `${mnemonic}`). Resolution order: custom generators →
+// built-ins → captured/var values.
 
 const NOT_BUILTIN = Symbol('not-builtin')
 
+/** A named generator: returns a fresh value each time `${name}` is interpolated. */
+export type Generators = Record<string, () => unknown>
+
 export class Scope {
     private readonly root: Record<string, unknown>
+    private readonly generators: Generators
 
-    constructor(seed: Record<string, unknown> = {}) {
+    constructor(seed: Record<string, unknown> = {}, generators: Generators = {}) {
         this.root = { ...seed }
+        this.generators = generators
     }
 
     get(path: string): unknown {
+        const gen = this.generators[path]
+        if (gen) return gen()
         const dynamic = builtin(path)
         if (dynamic !== NOT_BUILTIN) return dynamic
         return getByPath(this.root, path)

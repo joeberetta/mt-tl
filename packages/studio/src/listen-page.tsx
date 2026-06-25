@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from './icon.js'
 import { useSession } from './session.js'
-import { jsonView } from './try-it.js'
+import { jsonView } from './value-format.js'
 
 interface UpdLine {
     id: number

@@ -32,4 +32,11 @@ describe('Scope — ${...} interpolation', () => {
         expect((r.b as unknown[])[1]).toBe('X')
         expect(r.c).toBe(bin) // not mangled into a plain object
     })
+
+    it('supports custom generators (fresh each use, win over built-ins) — parity with cli/scope.ts', () => {
+        let n = 0
+        const s = new Scope({}, { seq: () => ++n, uuid: () => 'FIXED' })
+        expect(s.interpolate('${seq}-${seq}')).toBe('1-2') // fresh each interpolation
+        expect(s.interpolate('${uuid}')).toBe('FIXED') // custom overrides the built-in uuid
+    })
 })

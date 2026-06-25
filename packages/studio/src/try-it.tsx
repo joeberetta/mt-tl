@@ -5,9 +5,9 @@ import { FieldsEditor } from './field-input.js'
 import { RpcError } from './client/browser-session.js'
 import { Scope } from './client/scope.js'
 import { fmtMsgId } from './client/bytes.js'
+import { toHex, jsonView } from './value-format.js'
+import { scenarioStep, wrapScenario } from './scenario-yaml.js'
 import type { BObject, BValue } from './client/codec.js'
-
-const toHex = (b: Uint8Array): string => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
 
 interface TryResult {
     ok: boolean
@@ -22,43 +22,6 @@ const paramsOf = (value: BObject): Record<string, unknown> => {
     return rest
 }
 
-export function jsonView(v: BValue): string {
-    return JSON.stringify(
-        v,
-        (_k, val) => (val instanceof Uint8Array ? `0x${toHex(val)}` : typeof val === 'bigint' ? val.toString() : val),
-        2,
-    )
-}
-
-export function yamlValue(v: BValue): string {
-    if (v instanceof Uint8Array) return `!bytes hex:${toHex(v)}`
-    if (Array.isArray(v)) {
-        if (v.every(x => typeof x === 'number' || typeof x === 'string')) return `[${v.map(yamlValue).join(', ')}]`
-        return '\n' + v.map(x => `      - ${yamlValue(x).replace(/\n/g, '\n        ')}`).join('\n')
-    }
-    if (v && typeof v === 'object' && '_' in v) {
-        const o = v as BObject
-        const inner = Object.keys(o)
-            .filter(k => k !== '_')
-            .map(k => `${k}: ${yamlValue(o[k])}`)
-            .join(', ')
-        return `{ _: ${o._}${inner ? ', ' + inner : ''} }`
-    }
-    if (typeof v === 'string') return /^[\w.+-]*$/.test(v) ? v : JSON.stringify(v)
-    return String(v)
-}
-
-function yamlView(method: string, value: BObject, resultType: string): string {
-    const params = Object.keys(value).filter(k => k !== '_')
-    const lines = ['- invoke:', `    method: ${method}`]
-    if (params.length) {
-        lines.push('    params:')
-        for (const k of params) lines.push(`      ${k}: ${yamlValue(value[k])}`)
-    }
-    lines.push(`    expect: { _: ${resultType} }`)
-    return lines.join('\n')
-}
-
 type Fmt = 'json' | 'yaml' | 'bytes'
 
 /**
@@ -68,7 +31,7 @@ type Fmt = 'json' | 'yaml' | 'bytes'
  * over the shared session. Used on method pages (the per-method "try it").
  */
 export function RequestRunner({ method }: { method: string }) {
-    const { sess, session, status } = useSession()
+    const { sess, session, status, url } = useSession()
     const [ready, setReady] = useState(!!sess.codec)
     const [loadErr, setLoadErr] = useState<string>()
     const [value, setValue] = useState<BObject>({ _: method })
@@ -76,6 +39,7 @@ export function RequestRunner({ method }: { method: string }) {
     const [busy, setBusy] = useState(false)
     const [res, setRes] = useState<TryResult>()
     const [callErr, setCallErr] = useState<string>()
+    const [copied, setCopied] = useState(false)
 
     useEffect(() => {
         setValue({ _: method })
@@ -95,7 +59,10 @@ export function RequestRunner({ method }: { method: string }) {
     const preview = useMemo(() => {
         if (!ready) return ''
         if (fmt === 'json') return jsonView(value)
-        if (fmt === 'yaml') return yamlView(method, value, resultType)
+        // Canonical inline scenario step with the user's REAL filled values — pastes
+        // straight into the builder's editable scenario-YAML pane (and validates via
+        // testing's validateScenario).
+        if (fmt === 'yaml') return scenarioStep(method, value, resultType)
         try {
             const bytes = sess.encode(value)
             return `${bytes.length} bytes\n${toHex(bytes).replace(/(.{2})/g, '$1 ').trim()}`
@@ -137,13 +104,20 @@ export function RequestRunner({ method }: { method: string }) {
             setBusy(false)
         }
     }
+    // The .yaml download is a COMPLETE, CLI-runnable minimal scenario (target with
+    // schema/publicKey placeholders + the one filled step) — not a bare snippet.
     const download = (): void => {
-        const blob = new Blob([yamlView(method, value, resultType) + '\n'], { type: 'text/yaml' })
+        const blob = new Blob([wrapScenario(url, method, value, resultType)], { type: 'text/yaml' })
         const a = document.createElement('a')
         a.href = URL.createObjectURL(blob)
         a.download = `${method.replace(/\W+/g, '_')}.scenario.yaml`
         a.click()
         URL.revokeObjectURL(a.href)
+    }
+    const copyPreview = (): void => {
+        void navigator.clipboard?.writeText(preview)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1200)
     }
 
     return (
@@ -162,13 +136,16 @@ export function RequestRunner({ method }: { method: string }) {
                 </button>
                 {!connected && <span className="muted" style={{ fontSize: 12 }}>connect above to send · preview works offline</span>}
                 <span style={{ marginLeft: 'auto' }} />
-                <button onClick={download} title="export as a scenario step">
+                <button onClick={copyPreview} title={`copy the ${fmt === 'json' ? 'object' : fmt} preview`}>
+                    <Icon name={copied ? 'check' : 'copy'} /> {copied ? 'copied' : 'copy'}
+                </button>
+                <button onClick={download} title="download a runnable scenario .yaml">
                     <Icon name="download" /> .yaml
                 </button>
                 <div className="seg">
                     {(['json', 'yaml', 'bytes'] as Fmt[]).map(f => (
-                        <button key={f} className={fmt === f ? 'on' : ''} onClick={() => setFmt(f)}>
-                            {f === 'json' ? 'request' : f}
+                        <button key={f} className={fmt === f ? 'on' : ''} onClick={() => setFmt(f)} title={f === 'json' ? 'decoded request object' : f === 'yaml' ? 'scenario step (paste into the builder)' : 'wire bytes'}>
+                            {f === 'json' ? 'object' : f}
                         </button>
                     ))}
                 </div>

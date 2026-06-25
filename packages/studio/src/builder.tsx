@@ -1,9 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './icon.js'
-import { parse as parseYaml } from 'yaml'
 import { useSession } from './session.js'
 import { FieldsEditor } from './field-input.js'
-import { yamlValue, jsonView } from './try-it.js'
+import { jsonView } from './value-format.js'
+import {
+    toYaml,
+    fromScenario,
+    emptyStep,
+    emptyUser,
+    parsePairs,
+    type User,
+    type Step,
+    type Kind,
+    type ExpectMode,
+} from './scenario-yaml.js'
 import { listRecipes, runRecipeCode } from './recipes.js'
 import { BrowserSession, RpcError } from './client/browser-session.js'
 import { Scope, getByPath } from './client/scope.js'
@@ -15,42 +25,6 @@ const IMPORT_KEY = 'mt-tl-studio.import'
 const DRAFT_KEY = 'mt-tl-studio.scenario'
 const toHexStr = (b: Uint8Array): string => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
 
-type Kind = 'invoke' | 'expectUpdate'
-type ExpectMode = 'result' | 'error'
-interface User {
-    id: number
-    name: string
-    layer: string
-    recipe: string
-    with: string
-}
-interface Step {
-    id: number
-    as: string
-    label: string
-    kind: Kind
-    method: string
-    value: BObject
-    expectMode: ExpectMode
-    expect: string // result _ / error code / update _
-    matchField: string // expectUpdate: optional dot-path to assert
-    matchValue: string // expectUpdate: expected value at matchField
-    timeoutSec: string // expectUpdate: how long to wait
-    capture: string // invoke: `scopeKey = result.path` pairs (comma-sep) → later `${scopeKey}`
-}
-
-/** Parse a `key = a.b, key2 = c` capture spec into [scopeKey, resultPath] pairs. */
-function parseCapture(spec: string): Array<[string, string]> {
-    return spec
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean)
-        .map(s => {
-            const i = s.indexOf('=')
-            return i < 0 ? ([s.trim(), s.trim()] as [string, string]) : ([s.slice(0, i).trim(), s.slice(i + 1).trim()] as [string, string])
-        })
-        .filter(([k, p]) => k && p)
-}
 interface RunResult {
     status: 'ok' | 'err' | 'mismatch'
     text: string
@@ -68,17 +42,6 @@ const nid = (): number => ++seq
 const stripTag = (value: BObject): Record<string, unknown> => {
     const { _: _tag, ...rest } = value
     return rest
-}
-const paramsInline = (value: BObject): string => {
-    const keys = Object.keys(value).filter(k => k !== '_')
-    return keys.length ? `{ ${keys.map(k => `${k}: ${yamlValue(value[k] as BValue)}`).join(', ')} }` : ''
-}
-const compactJson = (raw: string): string => {
-    try {
-        return JSON.stringify(JSON.parse(raw))
-    } catch {
-        return raw.trim()
-    }
 }
 
 // Share a scenario in a compressed URL (B11 #6): deflate the YAML → base64url.
@@ -100,90 +63,10 @@ async function inflate(b64: string): Promise<string> {
     const stream = new Blob([unb64url(b64)]).stream().pipeThrough(new DecompressionStream('deflate'))
     return new TextDecoder().decode(await new Response(stream).arrayBuffer())
 }
-const getPath = (obj: unknown, path: string): unknown =>
-    path.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), obj)
-// Mask a user's `with` (secret) JSON for the EXPORT/SHARE artifact: keep the keys,
-// replace each value with a `your <key>` placeholder — so a shared scenario carries
-// no secrets and re-imports paste-ready (just fill the placeholders with real values).
-const maskWith = (raw: string): string => {
-    try {
-        const o = JSON.parse(raw) as Record<string, unknown>
-        return JSON.stringify(Object.fromEntries(Object.keys(o).map(k => [k, `your ${k}`])))
-    } catch {
-        return raw.trim()
-    }
-}
-
-const emptyStep = (as: string): Step => ({
-    id: nid(),
-    as,
-    label: '',
-    kind: 'invoke',
-    method: '',
-    value: { _: '' },
-    expectMode: 'result',
-    expect: '',
-    matchField: '',
-    matchValue: '',
-    timeoutSec: '',
-    capture: '',
-})
-
-/** Parse an mt-tl-test YAML scenario into builder state (auth `with` values blanked). */
-function fromScenario(text: string): { url?: string; users: User[]; steps: Step[] } {
-    const s = (parseYaml(text) ?? {}) as Record<string, any>
-    const url = s.target?.url as string | undefined
-    const usersObj = (s.users ?? {}) as Record<string, any>
-    const users: User[] = Object.keys(usersObj).length
-        ? Object.entries(usersObj).map(([name, u]) => ({
-              id: nid(),
-              name,
-              layer: u?.layer != null ? String(u.layer) : '',
-              recipe: u?.auth?.recipe ?? '',
-              // keep the auth args as-is — exports mask secrets to `your <key>` placeholders,
-              // so a re-import is paste-ready (no need to blank then re-type every key)
-              with: u?.auth?.with ? JSON.stringify(u.auth.with) : '',
-          }))
-        : [{ id: nid(), name: 'user', layer: '', recipe: '', with: '' }]
-    const fallbackUser = users[0]?.name ?? 'user'
-    const steps: Step[] = ((s.steps ?? []) as any[]).map(raw => {
-        const st = emptyStep(raw.as ?? fallbackUser)
-        st.as = raw.as ?? fallbackUser
-        st.label = raw.label ?? ''
-        if (raw.expectUpdate !== undefined) {
-            st.kind = 'expectUpdate'
-            const m = raw.expectUpdate ?? {}
-            st.expect = m._ ?? ''
-            const extra = Object.keys(m).filter(k => k !== '_')
-            if (extra.length) {
-                st.matchField = extra[0]!
-                st.matchValue = String(m[extra[0]!])
-            }
-            if (raw.timeoutMs) st.timeoutSec = String(raw.timeoutMs / 1000)
-        } else {
-            st.kind = 'invoke'
-            st.method = raw.invoke ?? ''
-            st.value = { _: st.method, ...(raw.params ?? {}) }
-            if (raw.expectError) {
-                st.expectMode = 'error'
-                st.expect = raw.expectError.code != null ? String(raw.expectError.code) : ''
-            } else {
-                st.expectMode = 'result'
-                st.expect = raw.expect?._ ?? ''
-            }
-            if (raw.capture && typeof raw.capture === 'object') {
-                st.capture = Object.entries(raw.capture as Record<string, unknown>)
-                    .map(([k, p]) => `${k} = ${String(p)}`)
-                    .join(', ')
-            }
-        }
-        return st
-    })
-    return { url, users, steps }
-}
 
 interface Draft {
     name: string
+    vars: string
     users: User[]
     steps: Step[]
 }
@@ -200,22 +83,31 @@ function deserializeDraft(json: string): Draft {
     ) as Draft
 }
 
+type Parsed = { name?: string; vars?: string; users?: User[]; steps?: Step[] }
+// Bump `nid` past any restored ids (incl. nested auth steps) so new items don't collide.
+function bumpSeq(p: Parsed): void {
+    const all: Array<{ id: number }> = [...(p.users ?? []), ...(p.steps ?? [])]
+    for (const u of p.users ?? []) all.push(...(u.authSteps ?? []))
+    for (const it of all) if (it && it.id > seq) seq = it.id
+}
+
 /**
- * Multi-user scenario builder: declare users (own session + layer + auth recipe),
- * assemble typed steps run `as` a user (invoke with expect/expectError, or
- * expectUpdate with a timeout + field match), RUN over real sessions with a full
- * run-log (req msg_id per call), import/export mt-tl-test YAML.
+ * Multi-user scenario builder: declare users (own session + layer + auth: a recipe
+ * or inline login steps), assemble typed steps run `as` a user (invoke with
+ * expect/expectError + multi-field match, expectUpdate, or a recipe macro), RUN
+ * over real sessions with a full run-log (req msg_id per call), import/export
+ * mt-tl-test YAML (target schema/publicKey placeholders + vars).
  */
 export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     const { openUser, pem, sess, url } = useSession()
     // Initial state, in priority order (read in the initializer → StrictMode-safe):
     //   1) a guide's stashed ```scenario import, 2) the persisted draft (survives
     //   navigation/refresh), 3) a blank scenario. Bump `nid` past any restored ids.
-    const [initial] = useState<{ name?: string; url?: string; users?: User[]; steps?: Step[] } | null>(() => {
-        let parsed: { name?: string; url?: string; users?: User[]; steps?: Step[] } | null = null
+    const [initial] = useState<Parsed | null>(() => {
+        let parsed: Parsed | null = null
         try {
             const y = sessionStorage.getItem(IMPORT_KEY)
-            if (y) parsed = fromScenario(y)
+            if (y) parsed = fromScenario(y, nid)
         } catch {
             /* ignore */
         }
@@ -227,15 +119,14 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                 /* ignore */
             }
         }
-        if (parsed) for (const it of [...(parsed.users ?? []), ...(parsed.steps ?? [])]) if (it && it.id > seq) seq = it.id
+        if (parsed) bumpSeq(parsed)
         return parsed
     })
     const [ready, setReady] = useState(false)
     const [name, setName] = useState(initial?.name ?? (slug && slug !== '' ? slug : 'scenario'))
-    const [users, setUsers] = useState<User[]>(
-        initial?.users?.length ? initial.users : [{ id: nid(), name: 'user', layer: '', recipe: '', with: '' }],
-    )
-    const [steps, setSteps] = useState<Step[]>(initial?.steps?.length ? initial.steps : [emptyStep('user')])
+    const [vars, setVars] = useState(initial?.vars ?? '')
+    const [users, setUsers] = useState<User[]>(initial?.users?.length ? initial.users : [emptyUser('user', nid)])
+    const [steps, setSteps] = useState<Step[]>(initial?.steps?.length ? initial.steps : [emptyStep('user', nid)])
     const [results, setResults] = useState<Record<number, RunResult>>({})
     const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
     const [running, setRunning] = useState(false)
@@ -280,16 +171,16 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     // Persist the draft so a misclick to another screen / a refresh doesn't lose it.
     useEffect(() => {
         try {
-            localStorage.setItem(DRAFT_KEY, serializeDraft({ name, users, steps }))
+            localStorage.setItem(DRAFT_KEY, serializeDraft({ name, vars, users, steps }))
         } catch {
             /* ignore */
         }
-    }, [name, users, steps])
+    }, [name, vars, users, steps])
 
     const methodNames = useMemo(() => Object.keys(spec.methods).sort(), [spec])
     // Live preview / editable pane shows real `with` values; the export/share artifact masks them.
-    const yaml = useMemo(() => toYaml(url, users, steps), [url, users, steps])
-    const maskedYaml = useMemo(() => toYaml(url, users, steps, true), [url, users, steps])
+    const yaml = useMemo(() => toYaml({ url, vars, users, steps }), [url, vars, users, steps])
+    const maskedYaml = useMemo(() => toYaml({ url, vars, users, steps }, true), [url, vars, users, steps])
     // Precompute the deflated share link so the clipboard write in share() is synchronous
     // inside the click gesture (Safari blocks navigator.clipboard.writeText after an await).
     useEffect(() => {
@@ -319,13 +210,16 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
             return n
         })
 
+    const applyParsed = (r: Parsed): void => {
+        if (r.vars !== undefined) setVars(r.vars)
+        if (r.users?.length) setUsers(r.users)
+        setSteps(r.steps?.length ? r.steps : [emptyStep('user', nid)])
+        setResults({})
+    }
     const applyImport = (text: string): void => {
         try {
-            const r = fromScenario(text)
             // don't adopt r.url — keep the connbar's live server (see the mount effect)
-            if (r.users.length) setUsers(r.users)
-            setSteps(r.steps.length ? r.steps : [emptyStep('user')])
-            setResults({})
+            applyParsed(fromScenario(text, nid))
             setImportErr(undefined)
         } catch (e) {
             setImportErr(e instanceof Error ? e.message : String(e))
@@ -337,8 +231,9 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     const clearScenario = (): void => {
         if (!window.confirm('Clear the current scenario? This drops all steps and users.')) return
         setName(slug && slug !== '' ? slug : 'scenario')
-        setUsers([{ id: nid(), name: 'user', layer: '', recipe: '', with: '' }])
-        setSteps([emptyStep('user')])
+        setVars('')
+        setUsers([emptyUser('user', nid)])
+        setSteps([emptyStep('user', nid)])
         setResults({})
         setLog([])
         try {
@@ -403,23 +298,36 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
         setLog([])
         const line = (text: string, kind: LogLine['kind'] = 'info'): void => setLog(l => [...l, { text, kind }])
         const sessions = new Map<string, BrowserSession>()
-        const scope = new Scope() // shared across steps for ${...} (generators + captures)
+        // Seed the shared scope with the scenario's vars (then captures + recipe ctx.set merge in).
+        let seed: Record<string, unknown> = {}
+        try {
+            seed = vars.trim() ? (JSON.parse(vars) as Record<string, unknown>) : {}
+        } catch {
+            line(`⚠ vars is not valid JSON — ignoring`, 'err')
+        }
+        const scope = new Scope(seed)
         try {
             for (const u of users) {
                 try {
                     // negotiate a layer always (real servers need initConnection first);
                     // "default" → the schema's latest layer.
                     const s = await openUser({ layer: u.layer ? Number(u.layer) : spec.latestLayer })
-                    if (u.recipe) {
+                    if (u.authMode === 'recipe' && u.recipe) {
                         const recipe = listRecipes().find(r => r.name === u.recipe)
                         if (!recipe) throw new Error(`recipe "${u.recipe}" not found`)
-                        const extra = u.with?.trim() ? (JSON.parse(u.with) as Record<string, unknown>) : {}
+                        const extra = u.with?.trim() ? (scope.interpolate(JSON.parse(u.with)) as Record<string, unknown>) : {}
                         const rScope = await runRecipeCode(recipe, s, msg => line(`  [${u.name}] ${msg}`), extra)
                         // recipe captures (ctx.set) become referenceable in steps via ${key}
                         for (const [k, v] of Object.entries(rScope)) scope.set(k, v)
                     }
                     sessions.set(u.name, s)
-                    line(`connected ${u.name}${u.layer ? ` @layer ${u.layer}` : ''}${u.recipe ? ` · auth ${u.recipe}` : ''}`, 'ok')
+                    line(`connected ${u.name}${u.layer ? ` @layer ${u.layer}` : ''}${u.authMode === 'recipe' && u.recipe ? ` · auth ${u.recipe}` : ''}`, 'ok')
+                    // Inline login steps: run them on this user's session before the main steps.
+                    if (u.authMode === 'steps') {
+                        for (const as of u.authSteps) {
+                            await runStep({ ...as, as: u.name }, s, scope, setResults, line, `auth[${u.name}] ${labelOf(as)}`)
+                        }
+                    }
                 } catch (e) {
                     line(`✕ ${u.name} auth/connect: ${e instanceof Error ? e.message : String(e)}`, 'err')
                     const firstStep = steps.find(s => s.as === u.name)
@@ -434,7 +342,7 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                     line(`✕ #${i + 1} [${st.as}] ${labelOf(st)}: no session`, 'err')
                     continue
                 }
-                await runStep(i, st, s, scope, setResults, line)
+                await runStep(st, s, scope, setResults, line, `#${i + 1} [${st.as}] ${labelOf(st)}`)
             }
             line('done', 'ok')
         } finally {
@@ -501,7 +409,19 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                 </div>
             )}
 
-            <Users users={users} setUsers={setUsers} spec={spec} />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+                <span className="muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.04em' }}>vars</span>
+                <input
+                    value={vars}
+                    placeholder='top-level vars (JSON): { "tag": "hi" } — reference as ${tag}'
+                    className="mono"
+                    onChange={e => setVars(e.target.value)}
+                    style={{ flex: 1, minWidth: 200, fontSize: 12 }}
+                    aria-label="scenario vars"
+                />
+            </div>
+
+            <Users users={users} setUsers={setUsers} spec={spec} methodNames={methodNames} ready={ready} results={results} />
 
             <div className="builder-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
                 <div>
@@ -524,7 +444,7 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                             remove={() => setSteps(s => s.filter(x => x.id !== st.id))}
                         />
                     ))}
-                    <button onClick={() => setSteps(s => [...s, emptyStep(userNames[0] ?? 'user')])}>
+                    <button onClick={() => setSteps(s => [...s, emptyStep(userNames[0] ?? 'user', nid)])}>
                         <Icon name="plus" /> add step
                     </button>
                 </div>
@@ -547,10 +467,7 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                             const text = e.target.value
                             setYamlDraft(text)
                             try {
-                                const r = fromScenario(text)
-                                if (r.users.length) setUsers(r.users)
-                                setSteps(r.steps.length ? r.steps : [emptyStep('user')])
-                                setResults({})
+                                applyParsed(fromScenario(text, nid))
                                 setYamlErr(undefined)
                             } catch (err) {
                                 setYamlErr(err instanceof Error ? err.message : String(err))
@@ -599,73 +516,130 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     )
 }
 
-function Users({ users, setUsers, spec }: { users: User[]; setUsers: (f: (u: User[]) => User[]) => void; spec: ApiSpec }) {
+function Users({
+    users,
+    setUsers,
+    spec,
+    methodNames,
+    ready,
+    results,
+}: {
+    users: User[]
+    setUsers: (f: (u: User[]) => User[]) => void
+    spec: ApiSpec
+    methodNames: string[]
+    ready: boolean
+    results: Record<number, RunResult>
+}) {
     const layers = [...spec.layers].reverse()
     const recipes = listRecipes()
+    const userNames = users.map(u => u.name)
+    const patchUser = (i: number, p: Partial<User>): void => setUsers(us => us.map((x, j) => (j === i ? { ...x, ...p } : x)))
+    const setAuthSteps = (i: number, f: (s: Step[]) => Step[]): void =>
+        setUsers(us => us.map((x, j) => (j === i ? { ...x, authSteps: f(x.authSteps) } : x)))
+    // The auth <select> encodes mode+recipe in one value: '' | __steps__ | recipe:<name>.
+    const authValue = (u: User): string => (u.authMode === 'anonymous' ? '' : u.authMode === 'steps' ? '__steps__' : `recipe:${u.recipe}`)
+    const onAuth = (i: number, v: string): void => {
+        if (v === '') patchUser(i, { authMode: 'anonymous', recipe: '' })
+        else if (v === '__steps__') patchUser(i, { authMode: 'steps' })
+        else patchUser(i, { authMode: 'recipe', recipe: v.slice('recipe:'.length) })
+    }
     return (
         <div style={{ marginBottom: 12 }}>
             <div className="muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.04em', margin: '6px 0' }}>
                 users
             </div>
             {users.map((u, i) => (
-                <div key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
-                    <input
-                        value={u.name}
-                        placeholder="name"
-                        onChange={e => setUsers(us => us.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-                        style={{ width: 130 }}
-                    />
-                    <label className="muted" style={{ fontSize: 12 }}>
-                        layer
-                        <select
-                            value={u.layer}
-                            onChange={e => setUsers(us => us.map((x, j) => (j === i ? { ...x, layer: e.target.value } : x)))}
-                            style={{ marginLeft: 6 }}
-                        >
-                            <option value="">default</option>
-                            {layers.map(l => (
-                                <option key={l} value={l}>
-                                    {l}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    <label className="muted" style={{ fontSize: 12 }}>
-                        auth
-                        <select
-                            value={u.recipe}
-                            onChange={e => setUsers(us => us.map((x, j) => (j === i ? { ...x, recipe: e.target.value } : x)))}
-                            style={{ marginLeft: 6 }}
-                        >
-                            <option value="">anonymous</option>
-                            {/* an imported recipe may not be saved locally — keep it selectable */}
-                            {u.recipe && !recipes.some(r => r.name === u.recipe) && (
-                                <option value={u.recipe}>{u.recipe} (not saved)</option>
-                            )}
-                            {recipes.map(r => (
-                                <option key={r.name} value={r.name}>
-                                    {r.name}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    {u.recipe && (
+                <div key={u.id} style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <input
-                            value={u.with}
-                            placeholder='with (JSON): { "phone": "…" }'
-                            className="mono"
-                            onChange={e => setUsers(us => us.map((x, j) => (j === i ? { ...x, with: e.target.value } : x)))}
-                            style={{ flex: 1, minWidth: 160, fontSize: 12 }}
+                            value={u.name}
+                            placeholder="name"
+                            onChange={e => patchUser(i, { name: e.target.value })}
+                            style={{ width: 130 }}
                         />
-                    )}
-                    {users.length > 1 && (
-                        <button onClick={() => setUsers(us => us.filter((_, j) => j !== i))} aria-label="remove user">
-                            ×
-                        </button>
+                        <label className="muted" style={{ fontSize: 12 }}>
+                            layer
+                            <select value={u.layer} onChange={e => patchUser(i, { layer: e.target.value })} style={{ marginLeft: 6 }}>
+                                <option value="">default</option>
+                                {layers.map(l => (
+                                    <option key={l} value={l}>
+                                        {l}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <label className="muted" style={{ fontSize: 12 }}>
+                            auth
+                            <select value={authValue(u)} onChange={e => onAuth(i, e.target.value)} style={{ marginLeft: 6 }}>
+                                <option value="">anonymous</option>
+                                {/* an imported recipe may not be saved locally — keep it selectable */}
+                                {u.authMode === 'recipe' && u.recipe && !recipes.some(r => r.name === u.recipe) && (
+                                    <option value={`recipe:${u.recipe}`}>{u.recipe} (not saved)</option>
+                                )}
+                                {recipes.map(r => (
+                                    <option key={r.name} value={`recipe:${r.name}`}>
+                                        {r.name}
+                                    </option>
+                                ))}
+                                <option value="__steps__">inline login steps</option>
+                            </select>
+                        </label>
+                        {u.authMode === 'recipe' && (
+                            <input
+                                value={u.with}
+                                placeholder='with (JSON): { "phone": "…" }'
+                                className="mono"
+                                onChange={e => patchUser(i, { with: e.target.value })}
+                                style={{ flex: 1, minWidth: 160, fontSize: 12 }}
+                            />
+                        )}
+                        {users.length > 1 && (
+                            <button onClick={() => setUsers(us => us.filter((_, j) => j !== i))} aria-label="remove user">
+                                ×
+                            </button>
+                        )}
+                    </div>
+                    {u.authMode === 'steps' && (
+                        <div style={{ marginLeft: 16, marginTop: 8, paddingLeft: 12, borderLeft: '2px solid var(--border)' }}>
+                            <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
+                                login steps (run on {u.name}'s session before the scenario steps)
+                            </div>
+                            {u.authSteps.map((as, k) => (
+                                <StepCard
+                                    key={as.id}
+                                    st={as}
+                                    index={k}
+                                    userNames={userNames}
+                                    methodNames={methodNames}
+                                    ready={ready}
+                                    res={results[as.id]}
+                                    collapsed={false}
+                                    hideAs
+                                    hideCollapse
+                                    onToggle={() => {}}
+                                    patch={(id, p) => setAuthSteps(i, s => s.map(x => (x.id === id ? { ...x, ...p } : x)))}
+                                    move={(id, d) =>
+                                        setAuthSteps(i, s => {
+                                            const a = s.findIndex(x => x.id === id)
+                                            const b = a + d
+                                            if (b < 0 || b >= s.length) return s
+                                            const c = [...s]
+                                            ;[c[a], c[b]] = [c[b]!, c[a]!]
+                                            return c
+                                        })
+                                    }
+                                    remove={() => setAuthSteps(i, s => s.filter(x => x.id !== as.id))}
+                                />
+                            ))}
+                            <button onClick={() => setAuthSteps(i, s => [...s, emptyStep(u.name, nid)])}>
+                                <Icon name="plus" /> add login step
+                            </button>
+                        </div>
                     )}
                 </div>
             ))}
-            <button onClick={() => setUsers(us => [...us, { id: nid(), name: `user${us.length + 1}`, layer: '', recipe: '', with: '' }])}>
+            <button onClick={() => setUsers(us => [...us, emptyUser(`user${us.length + 1}`, nid)])}>
                 <Icon name="plus" /> add user
             </button>
         </div>
@@ -684,6 +658,8 @@ function StepCard({
     patch,
     move,
     remove,
+    hideAs = false,
+    hideCollapse = false,
 }: {
     st: Step
     index: number
@@ -696,29 +672,39 @@ function StepCard({
     patch: (id: number, p: Partial<Step>) => void
     move: (id: number, d: number) => void
     remove: () => void
+    hideAs?: boolean
+    hideCollapse?: boolean
 }) {
+    const recipes = listRecipes()
     return (
         <div className="card" style={{ marginBottom: 10 }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: collapsed ? 0 : 8, flexWrap: 'wrap' }}>
-                <button onClick={onToggle} aria-label="collapse" className="iconbtn" style={{ width: 26, height: 26 }}>
-                    <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} />
-                </button>
+                {!hideCollapse && (
+                    <button onClick={onToggle} aria-label="collapse" className="iconbtn" style={{ width: 26, height: 26 }}>
+                        <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} />
+                    </button>
+                )}
                 <span className="id">#{index + 1}</span>
-                <span className="muted" style={{ fontSize: 12 }}>as</span>
-                <select value={st.as} onChange={e => patch(st.id, { as: e.target.value })}>
-                    {userNames.map(n => (
-                        <option key={n} value={n}>
-                            {n}
-                        </option>
-                    ))}
-                </select>
+                {!hideAs && (
+                    <>
+                        <span className="muted" style={{ fontSize: 12 }}>as</span>
+                        <select value={st.as} onChange={e => patch(st.id, { as: e.target.value })}>
+                            {userNames.map(n => (
+                                <option key={n} value={n}>
+                                    {n}
+                                </option>
+                            ))}
+                        </select>
+                    </>
+                )}
                 <select value={st.kind} onChange={e => patch(st.id, { kind: e.target.value as Kind })}>
                     <option value="invoke">invoke</option>
                     <option value="expectUpdate">expectUpdate</option>
+                    <option value="recipe">recipe</option>
                 </select>
                 {collapsed && (
                     <span className="mono" style={{ fontSize: 12, color: 'var(--text2)' }}>
-                        {st.kind === 'invoke' ? st.method || '—' : st.expect || 'update'}
+                        {st.kind === 'invoke' ? st.method || '—' : st.kind === 'recipe' ? `recipe ${st.recipe || '—'}` : st.expect || 'update'}
                         {st.label ? ` · ${st.label}` : ''}
                     </span>
                 )}
@@ -759,6 +745,23 @@ function StepCard({
                                     style={{ flex: 1 }}
                                 />
                             </div>
+                            {st.expectMode === 'error' ? (
+                                <input
+                                    value={st.errorMessage}
+                                    placeholder="error message (e.g. PHONE_CODE_INVALID) — optional"
+                                    className="mono"
+                                    onChange={e => patch(st.id, { errorMessage: e.target.value })}
+                                    style={{ width: '100%', marginTop: 6, fontSize: 12 }}
+                                />
+                            ) : (
+                                <input
+                                    value={st.matchSpec}
+                                    placeholder="match fields: data = hello, foo.bar = 42 — optional"
+                                    className="mono"
+                                    onChange={e => patch(st.id, { matchSpec: e.target.value })}
+                                    style={{ width: '100%', marginTop: 6, fontSize: 12 }}
+                                />
+                            )}
                             <input
                                 value={st.capture}
                                 placeholder="capture: scopeKey = result.path, … — use later as ${scopeKey}"
@@ -767,6 +770,29 @@ function StepCard({
                                 style={{ width: '100%', marginTop: 6, fontSize: 12 }}
                             />
                         </>
+                    ) : st.kind === 'recipe' ? (
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <select value={st.recipe} onChange={e => patch(st.id, { recipe: e.target.value })}>
+                                <option value="">
+                                    {recipes.length ? 'choose a recipe…' : 'no recipes — author one in ▸ auth recipes'}
+                                </option>
+                                {st.recipe && !recipes.some(r => r.name === st.recipe) && (
+                                    <option value={st.recipe}>{st.recipe} (not saved)</option>
+                                )}
+                                {recipes.map(r => (
+                                    <option key={r.name} value={r.name}>
+                                        {r.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <input
+                                value={st.with}
+                                placeholder='with (JSON): { "code": "…" }'
+                                className="mono"
+                                onChange={e => patch(st.id, { with: e.target.value })}
+                                style={{ flex: 1, minWidth: 160, fontSize: 12 }}
+                            />
+                        </div>
                     ) : (
                         <>
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -784,21 +810,13 @@ function StepCard({
                                     style={{ width: 90 }}
                                 />
                             </div>
-                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
-                                <input
-                                    value={st.matchField}
-                                    placeholder="match field (e.g. update.wallet_id) — optional"
-                                    className="mono"
-                                    onChange={e => patch(st.id, { matchField: e.target.value })}
-                                    style={{ flex: 2, fontSize: 12 }}
-                                />
-                                <input
-                                    value={st.matchValue}
-                                    placeholder="equals"
-                                    onChange={e => patch(st.id, { matchValue: e.target.value })}
-                                    style={{ flex: 1 }}
-                                />
-                            </div>
+                            <input
+                                value={st.matchSpec}
+                                placeholder="match fields: update.wallet_id = w1, … — optional"
+                                className="mono"
+                                onChange={e => patch(st.id, { matchSpec: e.target.value })}
+                                style={{ width: '100%', marginTop: 6, fontSize: 12 }}
+                            />
                         </>
                     )}
                     {res && (
@@ -826,30 +844,63 @@ function StepCard({
     )
 }
 
+/** Check a decoded value against an `_` constructor + extra `path = value` match fields. */
+function matchAll(
+    obj: BObject | undefined,
+    expectCtor: string,
+    matchSpec: string,
+    scope: Scope,
+): { ok: boolean; reason?: string } {
+    if (expectCtor && obj?._ !== expectCtor) return { ok: false, reason: `expected ${expectCtor}, got ${obj?._ ?? '∅'}` }
+    for (const [path, rawVal] of parsePairs(matchSpec)) {
+        const want = scope.interpolate(rawVal)
+        const got = getByPath(obj, path)
+        if (String(got) !== String(want)) return { ok: false, reason: `${path}: expected ${String(want)}, got ${String(got)}` }
+    }
+    return { ok: true }
+}
+
 async function runStep(
-    index: number,
     st: Step,
     s: BrowserSession,
     scope: Scope,
     setResults: (f: (p: Record<number, RunResult>) => Record<number, RunResult>) => void,
     line: (text: string, kind?: LogLine['kind']) => void,
+    tag: string,
 ): Promise<void> {
     const set = (r: RunResult): void => setResults(p => ({ ...p, [st.id]: r }))
-    const tag = `#${index + 1} [${st.as}] ${labelOf(st)}`
     // capture result fields into the scope for later `${...}` references
     const capture = (result: BObject): void => {
-        for (const [key, path] of parseCapture(st.capture)) {
+        for (const [key, path] of parsePairs(st.capture)) {
             scope.set(key, getByPath(result, path))
             line(`  captured ${key} = ${JSON.stringify(scope.get(key))}`)
         }
     }
 
-    if (st.kind === 'expectUpdate') {
-        const pred = (u: BObject): boolean => {
-            if (st.expect && u._ !== st.expect) return false
-            if (st.matchField && String(getPath(u, st.matchField)) !== st.matchValue) return false
-            return true
+    if (st.kind === 'recipe') {
+        if (!st.recipe) return
+        const recipe = listRecipes().find(r => r.name === st.recipe)
+        if (!recipe) {
+            set({ status: 'err', text: `recipe "${st.recipe}" not found` })
+            line(`✕ ${tag}: recipe "${st.recipe}" not found`, 'err')
+            return
         }
+        try {
+            const extra = st.with?.trim() ? (scope.interpolate(JSON.parse(st.with)) as Record<string, unknown>) : {}
+            const rScope = await runRecipeCode(recipe, s, msg => line(`  ${msg}`), extra)
+            for (const [k, v] of Object.entries(rScope)) scope.set(k, v)
+            set({ status: 'ok', text: `recipe ${st.recipe}`, detail: Object.keys(rScope).length ? jsonView(rScope as BValue) : undefined })
+            line(`✓ ${tag}`, 'ok')
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            set({ status: 'err', text: msg })
+            line(`✕ ${tag}: ${msg}`, 'err')
+        }
+        return
+    }
+
+    if (st.kind === 'expectUpdate') {
+        const pred = (u: BObject): boolean => matchAll(u, st.expect, st.matchSpec, scope).ok
         const timeoutMs = st.timeoutSec ? Number(st.timeoutSec) * 1000 : undefined
         try {
             const u = await s.expectUpdate(pred, timeoutMs)
@@ -877,13 +928,16 @@ async function runStep(
             line(`✕ ${tag} → msg_id ${msgId}: expected error, got ${(r as BObject)._}`, 'err')
         } catch (e) {
             if (e instanceof RpcError) {
-                const match = !st.expect || String(e.code) === st.expect
+                const codeOk = !st.expect || String(e.code) === st.expect
+                const msgOk = !st.errorMessage || e.message === st.errorMessage
+                const ok = codeOk && msgOk
+                const want = [st.expect && `code ${st.expect}`, st.errorMessage && `"${st.errorMessage}"`].filter(Boolean).join(' ')
                 set({
-                    status: match ? 'ok' : 'mismatch',
-                    text: match ? `rpc_error ${e.code} ${e.message}` : `expected ${st.expect}, got ${e.code}`,
+                    status: ok ? 'ok' : 'mismatch',
+                    text: ok ? `rpc_error ${e.code} ${e.message}` : `expected ${want}, got ${e.code} ${e.message}`,
                     msgId,
                 })
-                line(`${match ? '✓' : '✕'} ${tag} → msg_id ${msgId}: rpc_error ${e.code} ${e.message}`, match ? 'ok' : 'err')
+                line(`${ok ? '✓' : '✕'} ${tag} → msg_id ${msgId}: rpc_error ${e.code} ${e.message}`, ok ? 'ok' : 'err')
             } else {
                 const msg = e instanceof Error ? e.message : String(e)
                 set({ status: 'err', text: msg, msgId })
@@ -893,17 +947,16 @@ async function runStep(
         return
     }
     try {
-        const r = await s.invoke(st.method, params, { onSent })
-        const got = (r as BObject)?._ ?? '∅'
-        const mismatch = st.expect && got !== st.expect
+        const r = (await s.invoke(st.method, params, { onSent })) as BObject
+        const m = matchAll(r, st.expect, st.matchSpec, scope)
         set({
-            status: mismatch ? 'mismatch' : 'ok',
-            text: mismatch ? `expected ${st.expect}, got ${got}` : got,
+            status: m.ok ? 'ok' : 'mismatch',
+            text: m.ok ? (r?._ ?? '∅') : m.reason!,
             detail: jsonView(r as BValue),
             msgId,
         })
-        line(`${mismatch ? '✕' : '✓'} ${tag} → msg_id ${msgId}: ${got}`, mismatch ? 'err' : 'ok')
-        if (!mismatch) capture(r as BObject)
+        line(`${m.ok ? '✓' : '✕'} ${tag} → msg_id ${msgId}: ${m.ok ? (r?._ ?? '∅') : m.reason}`, m.ok ? 'ok' : 'err')
+        if (m.ok) capture(r)
     } catch (e) {
         if (e instanceof RpcError) {
             set({ status: 'err', text: `rpc_error ${e.code} ${e.message}`, msgId })
@@ -917,42 +970,10 @@ async function runStep(
 }
 
 function labelOf(st: Step): string {
-    return st.label || (st.kind === 'invoke' ? st.method || 'invoke' : `expectUpdate ${st.expect || ''}`.trim())
-}
-
-function toYaml(url: string, users: User[], steps: Step[], mask = false): string {
-    const out: string[] = ['target:', `    url: ${url}`]
-    const multi = users.length > 1 || users.some(u => u.layer || u.recipe)
-    if (multi) {
-        out.push('users:')
-        for (const u of users) {
-            const withInline = u.recipe && u.with?.trim() ? `, with: ${(mask ? maskWith : compactJson)(u.with)}` : ''
-            const auth = u.recipe ? `auth: { recipe: ${u.recipe}${withInline} }` : ''
-            const fields = [u.layer ? `layer: ${u.layer}` : '', auth].filter(Boolean).join(', ')
-            out.push(`    ${u.name}: {${fields ? ` ${fields} ` : ''}}`)
-        }
-    }
-    out.push('steps:')
-    for (const st of steps) {
-        const parts: string[] = []
-        if (multi) parts.push(`as: ${st.as}`)
-        if (st.label) parts.push(`label: ${JSON.stringify(st.label)}`)
-        if (st.kind === 'invoke') {
-            parts.push(`invoke: ${st.method || 'TODO'}`)
-            const p = paramsInline(st.value)
-            if (p) parts.push(`params: ${p}`)
-            if (st.expect) parts.push(st.expectMode === 'error' ? `expectError: { code: ${st.expect} }` : `expect: { _: ${st.expect} }`)
-            const caps = parseCapture(st.capture)
-            if (caps.length) parts.push(`capture: { ${caps.map(([k, p]) => `${k}: ${p}`).join(', ')} }`)
-        } else {
-            const m = [`_: ${st.expect || 'TODO'}`]
-            if (st.matchField) m.push(`${st.matchField}: ${st.matchValue}`)
-            parts.push(`expectUpdate: { ${m.join(', ')} }`)
-            if (st.timeoutSec) parts.push(`timeoutMs: ${Number(st.timeoutSec) * 1000}`)
-        }
-        out.push(`    - { ${parts.join(', ')} }`)
-    }
-    return out.join('\n') + '\n'
+    if (st.label) return st.label
+    if (st.kind === 'invoke') return st.method || 'invoke'
+    if (st.kind === 'recipe') return `recipe ${st.recipe || ''}`.trim()
+    return `expectUpdate ${st.expect || ''}`.trim()
 }
 
 /** Type-to-filter method picker. A native <select> is unusable with hundreds of
