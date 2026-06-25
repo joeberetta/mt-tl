@@ -197,6 +197,15 @@ export class TestSession<RM extends { [K in keyof RM]: MethodSpec } = AnyMethods
         return this.negotiated
     }
 
+    /** This session's MTProto identifiers (set after the handshake) — handy for
+     *  correlating a client session with the server's logs. */
+    get authKeyId(): bigint {
+        return this.raw.authKey_id
+    }
+    get sessionId(): bigint {
+        return this.raw.session
+    }
+
     /**
      * Call `method` with `params`, returning the decoded `rpc_result` payload.
      * Service messages (`new_session_created`, `msgs_ack`, …) are swallowed and

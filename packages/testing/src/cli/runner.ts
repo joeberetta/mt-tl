@@ -58,6 +58,9 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
             const spec = scenario.users?.[user]
             s = await opts.connect(user, { layer: spec?.layer, initConnection: spec?.initConnection })
             sessions.set(user, s)
+            // Once per user, on first connect: the session's MTProto ids (for server-log
+            // correlation), mirroring @mt-tl/studio's connbar/run-log.
+            opts.log?.(`· connected ${user} · auth_key_id ${fmtId(s.authKeyId)} · session_id ${fmtId(s.sessionId)}`)
         }
         return s
     }
@@ -264,4 +267,9 @@ function labelOf(step: Step): string {
 
 function errMsg(e: unknown): string {
     return e instanceof Error ? e.message : String(e)
+}
+
+/** Human form of a 64-bit MTProto id: hex (matches server logs) + decimal in parens. */
+function fmtId(id: bigint): string {
+    return `${id.toString(16).padStart(16, '0')} (${id.toString()})`
 }

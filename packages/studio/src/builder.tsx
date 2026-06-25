@@ -363,6 +363,8 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                     }
                     sessions.set(u.name, s)
                     line(`connected ${u.name}${u.layer ? ` @layer ${u.layer}` : ''}${u.authMode === 'recipe' && u.recipe ? ` · auth ${u.recipe}` : ''}`, 'ok')
+                    // once per user: the session's MTProto ids (for server-log correlation)
+                    line(`  auth_key_id ${fmtMsgId(s.authKeyId)} · session_id ${fmtMsgId(s.sessionId)}`)
                     // Inline login steps: run them on this user's session before the main steps.
                     if (u.authMode === 'steps') {
                         for (const as of u.authSteps) {

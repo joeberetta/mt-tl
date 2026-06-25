@@ -132,6 +132,15 @@ export class BrowserSession {
         return this.negotiated
     }
 
+    /** This session's MTProto identifiers (set after the handshake) — handy for
+     *  correlating a client session with the server's logs. */
+    get authKeyId(): bigint {
+        return this.raw.authKey_id
+    }
+    get sessionId(): bigint {
+        return this.raw.session
+    }
+
     /** Register a callback for when the underlying socket closes (server drop / network loss). */
     onClose(cb: () => void): void {
         this.raw.onClose(cb)

@@ -252,6 +252,21 @@ describe('mtproto-test CLI runner', () => {
         expect(report.steps.every(s => s.ok)).toBe(true)
     })
 
+    it('logs auth_key_id + session_id once per user on connect', async () => {
+        const lines: string[] = []
+        await runScenario(
+            {
+                target: { url: server.url },
+                users: { alice: {} }, // anonymous still handshakes → ids are set
+                steps: [{ as: 'alice', invoke: 'crypto.sendCode', params: { public_key: '', api_id: 1, api_hash: 'x' }, expect: { _: 'dataJSON' } }],
+            },
+            { connect: () => server.connect(), log: l => lines.push(l) },
+        )
+        const connectLine = lines.find(l => /connected alice/.test(l) && /auth_key_id/.test(l) && /session_id/.test(l))
+        expect(connectLine).toBeDefined()
+        expect(connectLine).toMatch(/auth_key_id [0-9a-f]{16} \(\d+\) · session_id [0-9a-f]{16} \(\d+\)/)
+    })
+
     it('runs a non-blocking expectUpdate: armed before its trigger, settled at the end', async () => {
         const report = await runScenario(
             {

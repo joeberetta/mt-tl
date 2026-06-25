@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Icon } from './icon.js'
 import { StudioSession } from './client/studio-session.js'
 import { BrowserSession } from './client/browser-session.js'
+import { fmtMsgId } from './client/bytes.js'
 import { listRecipes, runRecipeCode } from './recipes.js'
 
 export type ConnStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -160,6 +161,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             })
             setSession(s)
             setStatus('connected')
+            // Surface the session's MTProto ids for server-side correlation/debugging.
+            console.info(`[mt-tl-studio] connected ${url} · auth_key_id ${fmtMsgId(s.authKeyId)} · session_id ${fmtMsgId(s.sessionId)}`)
         } catch (e) {
             setErr(e instanceof Error ? e.message : String(e))
             setStatus('error')
@@ -230,7 +233,7 @@ const DOT: Record<ConnStatus, string> = {
 /** Full-width strip under the topbar: one shared connection for every "try it".
  *  `layer` is the studio's selected layer — the default session negotiates it. */
 export function ConnectionBar({ layer, route }: { layer?: number; route?: string }) {
-    const { status, err, url, setUrl, pem, setPem, apiId, setApiId, apiHash, setApiHash, obfuscated, setObfuscated, connect, reset, authedVia, runRecipe } =
+    const { status, err, url, setUrl, pem, setPem, apiId, setApiId, apiHash, setApiHash, obfuscated, setObfuscated, connect, reset, authedVia, runRecipe, session } =
         useSession()
     // The scenario builder authorizes per-user (its own recipe selects), so the shared
     // "run login" row is redundant there — hide it.
@@ -303,6 +306,13 @@ export function ConnectionBar({ layer, route }: { layer?: number; route?: string
                     </button>
                 )}
             </div>
+            {connected && session && (
+                <div className="connbar-row" style={{ marginTop: 6 }}>
+                    <span className="id" style={{ fontSize: 11, wordBreak: 'break-all' }} title="this session's MTProto ids — correlate with the server logs">
+                        auth_key_id {fmtMsgId(session.authKeyId)} · session_id {fmtMsgId(session.sessionId)}
+                    </span>
+                </div>
+            )}
             {connected && !hideAuth && (
                 <div className="connbar-row" style={{ marginTop: 8 }}>
                     {authedVia ? (
