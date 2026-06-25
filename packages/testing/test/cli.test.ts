@@ -252,6 +252,28 @@ describe('mtproto-test CLI runner', () => {
         expect(report.steps.every(s => s.ok)).toBe(true)
     })
 
+    it('accepts studio-style direct ctx.scope assignment (`ctx.scope.userId = …`)', async () => {
+        // A recipe written for @mt-tl/studio captures via a plain `ctx.scope.x = …`.
+        // testing's ctx.scope is a Scope instance, but the runner's userScope trap
+        // routes the assignment into the interpolation scope (flat + per-user).
+        const recipes: RecipeMap = {
+            signup: async ({ scope, user }) => {
+                ;(scope as unknown as Record<string, unknown>).userId = user === 'bob' ? '99' : '11'
+            },
+        }
+        const report = await runScenario(
+            {
+                target: { url: server.url },
+                users: { alice: { auth: { recipe: 'signup' } }, bob: { auth: { recipe: 'signup' } } },
+                steps: [
+                    { as: 'alice', invoke: 'crypto.sendCode', params: { public_key: '', api_id: 1, api_hash: '${bob.userId}' }, expect: { data: '99' } },
+                ],
+            },
+            { connect: () => server.connect(), recipes },
+        )
+        expect(report.ok).toBe(true)
+    })
+
     it('logs auth_key_id + session_id once per user on connect', async () => {
         const lines: string[] = []
         await runScenario(
