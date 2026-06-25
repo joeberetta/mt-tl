@@ -28,7 +28,9 @@ interface SessionCtx {
     connect: (layer?: number) => Promise<void>
     reset: () => void
     authedVia?: string
-    runRecipe: (name: string, withArgs?: Record<string, unknown>) => Promise<void>
+    /** Run a saved recipe on the shared session. `onLog` receives the recipe's
+     *  `ctx.log` lines; resolves to the recipe's `scope` (its `ctx.set` results). */
+    runRecipe: (name: string, withArgs?: Record<string, unknown>, onLog?: (line: string) => void) => Promise<Record<string, unknown>>
     /** Open a fresh per-user session (own handshake + optional layer) off the shared url+key. */
     openUser: (opts?: { layer?: number }) => Promise<BrowserSession>
 }
@@ -171,7 +173,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setErr(undefined)
         setAuthedVia(undefined)
     }
-    const runRecipe = async (name: string, withArgs: Record<string, unknown> = {}): Promise<void> => {
+    const runRecipe = async (
+        name: string,
+        withArgs: Record<string, unknown> = {},
+        onLog?: (line: string) => void,
+    ): Promise<Record<string, unknown>> => {
         if (!session) throw new Error('connect first')
         const recipe = listRecipes().find(r => r.name === name)
         if (!recipe) throw new Error(`recipe "${name}" not found`)
@@ -180,8 +186,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const creds: Record<string, unknown> = {}
         if (apiId.trim()) creds.api_id = Number(apiId)
         if (apiHash.trim()) creds.api_hash = apiHash.trim()
-        await runRecipeCode(recipe, session, undefined, { ...creds, ...withArgs })
+        const scope = await runRecipeCode(recipe, session, onLog, { ...creds, ...withArgs })
         setAuthedVia(name)
+        return scope
     }
 
     return (
@@ -233,6 +240,10 @@ export function ConnectionBar({ layer, route }: { layer?: number; route?: string
     const [recipeWith, setRecipeWith] = useState('')
     const [recipeBusy, setRecipeBusy] = useState(false)
     const [recipeErr, setRecipeErr] = useState<string>()
+    // The recipe's ctx.log lines + final scope, shown under the bar like the
+    // ▸ auth recipes "test run" — so a signup recipe's generated seed is visible here too.
+    const [recipeLog, setRecipeLog] = useState<string[]>([])
+    const [showLog, setShowLog] = useState(false)
     const connected = status === 'connected'
     const recipes = connected ? listRecipes() : []
 
@@ -240,11 +251,16 @@ export function ConnectionBar({ layer, route }: { layer?: number; route?: string
         if (!recipe) return
         setRecipeBusy(true)
         setRecipeErr(undefined)
+        setRecipeLog([])
+        setShowLog(true)
         try {
             const withArgs = recipeWith.trim() ? (JSON.parse(recipeWith) as Record<string, unknown>) : {}
-            await runRecipe(recipe, withArgs)
+            const scope = await runRecipe(recipe, withArgs, line => setRecipeLog(l => [...l, line]))
+            setRecipeLog(l => [...l, '✓ done · scope = ' + JSON.stringify(scope)])
         } catch (e) {
-            setRecipeErr(e instanceof Error ? e.message : String(e))
+            const msg = e instanceof Error ? e.message : String(e)
+            setRecipeErr(msg)
+            setRecipeLog(l => [...l, '✕ ' + msg])
         } finally {
             setRecipeBusy(false)
         }
@@ -331,9 +347,25 @@ export function ConnectionBar({ layer, route }: { layer?: number; route?: string
                     </button>
                 </div>
             )}
-            {recipeErr && (
-                <div className="connbar-panel" style={{ color: 'var(--danger)', fontSize: 12 }}>
-                    recipe failed — {recipeErr}
+            {showLog && recipeLog.length > 0 && (
+                <div className="connbar-panel">
+                    <div className="connbar-row" style={{ marginBottom: 6 }}>
+                        <span className="muted" style={{ fontSize: 12, color: recipeErr ? 'var(--danger)' : undefined }}>
+                            <Icon name={recipeBusy ? 'loader-2' : 'player-play'} /> run login · {recipe}
+                        </span>
+                        <button
+                            className="iconbtn"
+                            onClick={() => setShowLog(false)}
+                            aria-label="close log"
+                            title="close"
+                            style={{ marginLeft: 'auto' }}
+                        >
+                            <Icon name="x" />
+                        </button>
+                    </div>
+                    <pre className="preview" style={{ margin: 0 }}>
+                        {recipeLog.join('\n')}
+                    </pre>
                 </div>
             )}
             {open && (

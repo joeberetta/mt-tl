@@ -225,12 +225,26 @@ nav.side .navgroup:first-of-type {
     border-top: 0;
 }
 nav.side .group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     padding: 10px 16px 3px;
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text3);
     user-select: none;
+}
+.navcount {
+    margin-left: auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text3);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 0 6px;
+    line-height: 15px;
 }
 .nav-search {
     display: flex;
@@ -730,7 +744,7 @@ a.card:hover {
     background: var(--accent-bg);
     color: var(--accent);
 }
-pre.preview {
+.preview {
     font-family: var(--mono);
     font-size: 12px;
     background: var(--bg3);
@@ -741,6 +755,18 @@ pre.preview {
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-all;
+}
+textarea.yaml-edit {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    color: var(--text);
+    border: 1px solid var(--border);
+    tab-size: 4;
+}
+textarea.yaml-edit:focus {
+    border-color: var(--accent);
+    outline: none;
 }
 .result {
     margin-top: 12px;
@@ -761,4 +787,41 @@ pre.preview {
     gap: 8px;
     margin-bottom: 8px;
     font-size: 13px;
+}
+
+/* --- filterable method picker (scenario builder) --- */
+.combobox {
+    position: relative;
+}
+.combobox-list {
+    position: absolute;
+    z-index: 20;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 2px;
+    max-height: 280px;
+    overflow-y: auto;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.combobox-opt {
+    padding: 6px 10px;
+    font-family: var(--mono, monospace);
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.combobox-opt:hover {
+    background: var(--bg3, var(--border));
+}
+.combobox-opt.on {
+    color: var(--accent);
+}
+.combobox-more {
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text3);
+    border-top: 1px solid var(--border);
 }

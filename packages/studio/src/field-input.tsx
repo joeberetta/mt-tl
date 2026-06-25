@@ -14,10 +14,20 @@ function TypeInput({ type, value, onChange }: { type: TlType; value: BValue; onC
         case 'double':
             return (
                 <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
+                    className="mono"
                     value={value === undefined || value === null ? '' : String(value)}
-                    onChange={e => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
-                    style={{ width: 160 }}
+                    // a `${...}` variable (e.g. ${rand.int}) is kept as a template string —
+                    // `type=number` would block it entirely; otherwise coerce to a number.
+                    onChange={e => {
+                        const v = e.target.value
+                        if (/[${}]/.test(v)) return onChange(v)
+                        const cleaned = v.replace(/[^0-9.\-]/g, '')
+                        onChange(cleaned === '' || cleaned === '-' ? 0 : Number(cleaned))
+                    }}
+                    placeholder="0 or ${rand.int}"
+                    style={{ width: 200 }}
                 />
             )
         case 'long':
@@ -26,10 +36,11 @@ function TypeInput({ type, value, onChange }: { type: TlType; value: BValue; onC
                     type="text"
                     className="mono"
                     value={value === undefined || value === null ? '' : String(value)}
-                    // allow a `${...}` template (e.g. ${rand.long}); otherwise keep it numeric
+                    // allow a `${...}` template (e.g. ${rand.long}); the old `includes('${')`
+                    // guard stripped the `$` before you could type the `{`, so match any of `${}`.
                     onChange={e => {
                         const v = e.target.value
-                        onChange(v.includes('${') ? v : v.replace(/[^0-9-]/g, ''))
+                        onChange(/[${}]/.test(v) ? v : v.replace(/[^0-9-]/g, ''))
                     }}
                     placeholder="0 or ${rand.long}"
                     style={{ width: 200 }}

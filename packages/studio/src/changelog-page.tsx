@@ -2,7 +2,7 @@ import { useContext, useEffect, useMemo, useState } from 'react'
 import { Icon } from './icon.js'
 import { marked } from 'marked'
 import { LayerCtx } from './layer-context.js'
-import { computeLayerDiff, type ChangeEntry } from './doc-utils.js'
+import { computeLayerDiff, computeRangeDiff, type ChangeEntry } from './doc-utils.js'
 import type { ApiSpec } from './spec-types.js'
 
 /**
@@ -82,7 +82,53 @@ export function ChangelogPage({ spec }: { spec: ApiSpec }) {
                     )}
                 </div>
             </div>
+
+            <RangeDiff spec={spec} />
         </main>
+    )
+}
+
+/** Net diff between any two chosen layers (e.g. 190 → 200) in one view — the
+ *  per-layer diff above only compares adjacent layers; this spans an arbitrary range. */
+function RangeDiff({ spec }: { spec: ApiSpec }) {
+    const layers = spec.layers
+    const [from, setFrom] = useState(layers[0]!)
+    const [to, setTo] = useState(spec.latestLayer)
+    const [wrap, setWrap] = useState(false)
+    const diff = useMemo(() => computeRangeDiff(spec, from, to), [spec, from, to])
+    const pick = (v: number, set: (n: number) => void, label: string) => (
+        <select value={v} onChange={e => set(Number(e.target.value))} aria-label={label}>
+            {layers.map(l => (
+                <option key={l} value={l}>
+                    {l}
+                    {l === spec.latestLayer ? ' · latest' : ''}
+                </option>
+            ))}
+        </select>
+    )
+    const total = diff.added.length + diff.changed.length + diff.removed.length
+    return (
+        <section style={{ marginTop: 28, borderTop: '1px solid var(--border)', paddingTop: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+                <h2 style={{ fontSize: 17, margin: 0 }}>Diff across layers</h2>
+                {pick(from, setFrom, 'from layer')} <span className="muted">→</span> {pick(to, setTo, 'to layer')}
+                <span className="id">{total} change{total === 1 ? '' : 's'}</span>
+                <button className={wrap ? 'on' : ''} onClick={() => setWrap(w => !w)} title="wrap long lines" style={{ marginLeft: 'auto', fontSize: 12 }}>
+                    <Icon name="text-wrap" /> {wrap ? 'wrap' : 'no wrap'}
+                </button>
+            </div>
+            {from === to ? (
+                <div className="callout">Pick two different layers to compare.</div>
+            ) : total === 0 ? (
+                <div className="callout">No schema changes between layer {from} and {to}.</div>
+            ) : (
+                <div className={'schema-dump' + (wrap ? ' wrap' : '')}>
+                    <Section title="added" entries={diff.added} color="var(--ok)" />
+                    <Section title="changed" entries={diff.changed} color="var(--accent)" showDetail />
+                    <Section title="removed" entries={diff.removed} color="var(--danger)" struck />
+                </div>
+            )}
+        </section>
     )
 }
 

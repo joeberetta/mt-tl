@@ -37,6 +37,10 @@ export function App() {
     const [err, setErr] = useState<string>()
     const [layer, setLayerState] = useState(0)
     const route = useHash()
+    // Off-canvas nav drawer (mobile only — CSS keeps it hidden ≥760px). Closes on
+    // any navigation so tapping a symbol slides it away.
+    const [navOpen, setNavOpen] = useState(false)
+    useEffect(() => setNavOpen(false), [route])
 
     // Layer lives in the hash query (`?layer=N`) so views are shareable (B11 #1).
     // replaceState avoids history spam + doesn't fire hashchange (no loop).
@@ -85,11 +89,12 @@ export function App() {
     return (
         <SessionProvider>
             <LayerCtx.Provider value={{ layer, setLayer }}>
-                <div className="layout">
-                    <TopBar spec={spec} />
+                <div className={'layout' + (navOpen ? ' nav-open' : '')}>
+                    <TopBar spec={spec} onToggleNav={() => setNavOpen(o => !o)} />
                     <ConnectionBar layer={layer} route={route} />
                     <SideNav spec={spec} scenarios={scenarios} route={route} />
                     <Page spec={spec} scenarios={scenarios} route={route} descriptions={descriptions} />
+                    <div className="nav-overlay" onClick={() => setNavOpen(false)} aria-hidden="true" />
                 </div>
                 <CommandPalette spec={spec} scenarios={scenarios} />
             </LayerCtx.Provider>
@@ -203,10 +208,13 @@ function CommandPalette({ spec, scenarios }: { spec: ApiSpec; scenarios: Scenari
     )
 }
 
-function TopBar({ spec }: { spec: ApiSpec }) {
+function TopBar({ spec, onToggleNav }: { spec: ApiSpec; onToggleNav: () => void }) {
     const { layer, setLayer } = useContext(LayerCtx)
     return (
         <div className="topbar">
+            <button className="nav-toggle iconbtn" onClick={onToggleNav} aria-label="open navigation" title="menu">
+                <Icon name="menu" />
+            </button>
             <a href="#/" className="brand">
                 MTProto API · <span className="muted">mt-tl studio</span>
             </a>
@@ -228,14 +236,18 @@ function TopBar({ spec }: { spec: ApiSpec }) {
     )
 }
 
-const NAV_LS = 'mt-tl-studio.navCollapsed'
+// v2 semantics: stores the group keys whose open/closed state is FLIPPED from the
+// default. Method groups (`m:<ns>`) default to COLLAPSED — a big schema has dozens of
+// namespaces; everything else (tools/reference/guides/types) defaults to expanded.
+const NAV_LS = 'mt-tl-studio.navState'
+const defaultOpen = (key: string): boolean => !key.startsWith('m:')
 
 function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenario[]; route: string }) {
     // Reflects the SELECTED layer's surface (symbols not present at that layer are
     // hidden); a search filters by name, groups collapse (persisted), "/" focuses search.
     const { layer } = useContext(LayerCtx)
     const [q, setQ] = useState('')
-    const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    const [flipped, setFlipped] = useState<Set<string>>(() => {
         try {
             return new Set(JSON.parse(localStorage.getItem(NAV_LS) ?? '[]') as string[])
         } catch {
@@ -259,7 +271,7 @@ function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenari
     const forceOpen = ql.length > 0
     const match = (s: string): boolean => !ql || s.toLowerCase().includes(ql)
     const toggle = (key: string): void =>
-        setCollapsed(c => {
+        setFlipped(c => {
             const n = new Set(c)
             n.has(key) ? n.delete(key) : n.add(key)
             try {
@@ -292,12 +304,13 @@ function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenari
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [scenarios, ql])
 
-    const grp = (key: string, title: string, items: React.ReactNode): React.ReactNode => {
-        const open = forceOpen || !collapsed.has(key)
+    const grp = (key: string, title: string, items: React.ReactNode, count?: number): React.ReactNode => {
+        const open = forceOpen || (flipped.has(key) ? !defaultOpen(key) : defaultOpen(key))
         return (
             <div className="navgroup" key={key}>
                 <div className="group" onClick={() => !forceOpen && toggle(key)} style={{ cursor: forceOpen ? 'default' : 'pointer' }}>
                     <Icon name={open ? 'chevron-down' : 'chevron-right'} style={{ fontSize: 11 }} /> {title}
+                    {count !== undefined && <span className="navcount">{count}</span>}
                 </div>
                 {open && items}
             </div>
@@ -357,6 +370,7 @@ function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenari
                             {short(s.name)}
                         </NavLink>
                     )),
+                    syms.length,
                 ),
             )}
             {types.length > 0 &&

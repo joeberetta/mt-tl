@@ -18,6 +18,7 @@ export type IconName =
     | 'key'
     | 'link'
     | 'loader-2'
+    | 'menu'
     | 'player-play'
     | 'player-stop'
     | 'plus'
@@ -58,6 +59,7 @@ const PATHS: Record<IconName, string[]> = {
         'M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463',
     ],
     'loader-2': ['M12 3a9 9 0 1 0 9 9'],
+    menu: ['M4 6l16 0', 'M4 12l16 0', 'M4 18l16 0'],
     'player-play': ['M7 4v16l13 -8z'],
     'player-stop': ['M5 5m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z'],
     plus: ['M12 5l0 14', 'M5 12l14 0'],

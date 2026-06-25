@@ -67,6 +67,28 @@ export function computeLayerDiff(spec: ApiSpec, layer: number): LayerDiff {
     return { layer, prev, added: added.sort(byName), changed: changed.sort(byName), removed: removed.sort(byName) }
 }
 
+/** Diff two ARBITRARY layers (`from` → `to`, not necessarily adjacent): the net
+ *  added / changed / removed across the whole span. Powers the changelog's
+ *  "diff across layers" picker (e.g. 190 → 200 in one view). */
+export function computeRangeDiff(spec: ApiSpec, from: number, to: number): LayerDiff {
+    const added: ChangeEntry[] = []
+    const changed: ChangeEntry[] = []
+    const removed: ChangeEntry[] = []
+    const all = [...Object.values(spec.methods), ...Object.values(spec.constructors)]
+    for (const s of all) {
+        const a = s.byLayer[from]
+        const b = s.byLayer[to]
+        if (b && !a) added.push({ name: s.name, kind: s.kind, line: tlLine(s, b) })
+        else if (a && !b) removed.push({ name: s.name, kind: s.kind, line: tlLine(s, a) })
+        else if (a && b) {
+            const d = shapeDiff(a, b)
+            if (d) changed.push({ name: s.name, kind: s.kind, line: tlLine(s, b), detail: d })
+        }
+    }
+    const byName = (x: ChangeEntry, y: ChangeEntry): number => x.name.localeCompare(y.name)
+    return { layer: to, prev: from, added: added.sort(byName), changed: changed.sort(byName), removed: removed.sort(byName) }
+}
+
 /** Field-level diff between two shapes of the same symbol (for the on-page layer diff, B11 #7). */
 export function paramDiff(
     a: SpecShape,

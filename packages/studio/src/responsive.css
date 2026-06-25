@@ -1,0 +1,150 @@
+/* ============================================================================
+   Responsive / mobile layer
+   ----------------------------------------------------------------------------
+   styles.css is desktop-first: a fixed 248px sidebar grid, side-by-side builder
+   panes and wide form rows. This file layers the small-screen behaviour on top.
+   It lives in its own file (imported after styles.css in main.tsx) so its
+   equal-specificity rules win the cascade and it composes without touching the
+   base sheet.
+
+   Breakpoints:
+     <= 760px  phones + small tablets — single column, off-canvas nav drawer
+     <= 480px  narrow phones — tighten the top bar and spacing further
+   ============================================================================ */
+
+/* The hamburger (top bar) and the drawer scrim are desktop-hidden by default and
+   only revealed inside the mobile media query below. */
+.nav-toggle {
+    display: none;
+}
+.nav-overlay {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    /* Single column — the sidebar leaves the grid flow and becomes a drawer. */
+    .layout {
+        grid-template-columns: 1fr;
+    }
+
+    /* Top bar: tighter padding, hamburger visible; stays on one row and lets the
+       brand shrink rather than wrapping. */
+    .topbar {
+        padding: 9px 12px;
+        gap: 8px;
+    }
+    .nav-toggle {
+        display: inline-flex;
+    }
+    .topbar .brand {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* --- off-canvas nav drawer --- */
+    nav.side {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 80vw;
+        max-width: 300px;
+        max-height: 100vh;
+        background: var(--bg);
+        z-index: 60;
+        transform: translateX(-100%);
+        transition: transform 0.22s ease;
+        box-shadow: 4px 0 28px rgba(0, 0, 0, 0.28);
+        padding-top: 10px;
+        -webkit-overflow-scrolling: touch; /* momentum scroll for the long symbol list */
+    }
+    .layout.nav-open nav.side {
+        transform: translateX(0);
+    }
+    .nav-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.42);
+        z-index: 50;
+    }
+    .layout.nav-open .nav-overlay {
+        display: block;
+    }
+
+    /* Content: trim the generous desktop padding. */
+    main.content {
+        padding: 16px 14px;
+    }
+
+    /* Connection bar: wrap instead of overflowing the viewport. */
+    .connbar {
+        padding: 8px 12px;
+    }
+    .connbar-row {
+        flex-wrap: wrap;
+    }
+
+    /* Request-runner / builder field rows: stack the label above its control. */
+    .frow {
+        grid-template-columns: 1fr;
+        gap: 4px 0;
+    }
+    .fname {
+        padding-top: 0;
+    }
+    .frow input,
+    .frow select,
+    .frow textarea,
+    .frow .ctl > * {
+        min-width: 0;
+    }
+    .nested {
+        padding-left: 8px;
+    }
+
+    /* Builder: the two equal panes (steps | live YAML) stack vertically. The
+       columns come from an inline style, so the override needs !important. */
+    .builder-grid {
+        grid-template-columns: 1fr !important;
+        gap: 14px !important;
+    }
+
+    /* Parameter table: let long mono types wrap rather than clip or scroll. */
+    table.params {
+        font-size: 12px;
+    }
+    table.params td {
+        overflow-wrap: anywhere;
+    }
+
+    /* Command palette: a touch higher on short screens. */
+    .cmdk-backdrop {
+        padding-top: 8vh;
+    }
+}
+
+@media (max-width: 480px) {
+    /* ⌘K hint becomes an icon-only search button (no physical ⌘K on a phone, but
+       it still opens the palette — the primary search on mobile). */
+    .cmdk-hint {
+        margin-left: 0;
+        padding: 4px 6px;
+        gap: 0;
+        font-size: 0; /* hides the "search" label text */
+    }
+    .cmdk-hint .icon {
+        font-size: 15px; /* restore the icon (parent font-size:0 zeroed it) */
+    }
+    .cmdk-hint .kbd {
+        display: none;
+    }
+
+    main.content {
+        padding: 14px 12px;
+    }
+    h1 {
+        font-size: 19px;
+    }
+}

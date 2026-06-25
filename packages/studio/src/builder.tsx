@@ -102,8 +102,17 @@ async function inflate(b64: string): Promise<string> {
 }
 const getPath = (obj: unknown, path: string): unknown =>
     path.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), obj)
-const blankValues = (o: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(Object.keys(o).map(k => [k, '']))
+// Mask a user's `with` (secret) JSON for the EXPORT/SHARE artifact: keep the keys,
+// replace each value with a `your <key>` placeholder — so a shared scenario carries
+// no secrets and re-imports paste-ready (just fill the placeholders with real values).
+const maskWith = (raw: string): string => {
+    try {
+        const o = JSON.parse(raw) as Record<string, unknown>
+        return JSON.stringify(Object.fromEntries(Object.keys(o).map(k => [k, `your ${k}`])))
+    } catch {
+        return raw.trim()
+    }
+}
 
 const emptyStep = (as: string): Step => ({
     id: nid(),
@@ -131,8 +140,9 @@ function fromScenario(text: string): { url?: string; users: User[]; steps: Step[
               name,
               layer: u?.layer != null ? String(u.layer) : '',
               recipe: u?.auth?.recipe ?? '',
-              // keep the auth-arg KEYS but blank the (secret) values
-              with: u?.auth?.with ? JSON.stringify(blankValues(u.auth.with)) : '',
+              // keep the auth args as-is — exports mask secrets to `your <key>` placeholders,
+              // so a re-import is paste-ready (no need to blank then re-type every key)
+              with: u?.auth?.with ? JSON.stringify(u.auth.with) : '',
           }))
         : [{ id: nid(), name: 'user', layer: '', recipe: '', with: '' }]
     const fallbackUser = users[0]?.name ?? 'user'
@@ -232,6 +242,18 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     const [log, setLog] = useState<LogLine[]>([])
     const [importErr, setImportErr] = useState<string>()
     const [shared, setShared] = useState(false)
+    // Share link is precomputed off the gesture (see effect) so `share()` can write the
+    // clipboard SYNCHRONOUSLY in the click handler — Safari rejects clipboard writes that
+    // happen after an `await`. On any clipboard failure we surface the link for manual copy.
+    const [shareUrl, setShareUrl] = useState('')
+    const [shareWarn, setShareWarn] = useState<string>()
+    const [shareLink, setShareLink] = useState<string>()
+    // Hand-editable YAML pane: while focused, the textarea shows a free-typing draft and
+    // every valid parse syncs back into the users/steps on the left; on blur it snaps to
+    // the regenerated YAML. (#3 — e.g. paste a "scenario step" copied from a method page.)
+    const [editingYaml, setEditingYaml] = useState(false)
+    const [yamlDraft, setYamlDraft] = useState<string | null>(null)
+    const [yamlErr, setYamlErr] = useState<string>()
     const fileRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {
@@ -265,7 +287,20 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
     }, [name, users, steps])
 
     const methodNames = useMemo(() => Object.keys(spec.methods).sort(), [spec])
+    // Live preview / editable pane shows real `with` values; the export/share artifact masks them.
     const yaml = useMemo(() => toYaml(url, users, steps), [url, users, steps])
+    const maskedYaml = useMemo(() => toYaml(url, users, steps, true), [url, users, steps])
+    // Precompute the deflated share link so the clipboard write in share() is synchronous
+    // inside the click gesture (Safari blocks navigator.clipboard.writeText after an await).
+    useEffect(() => {
+        let alive = true
+        deflate(maskedYaml)
+            .then(s => alive && setShareUrl(`${location.origin}${location.pathname}#/builder?s=${s}`))
+            .catch(() => alive && setShareUrl(''))
+        return () => {
+            alive = false
+        }
+    }, [maskedYaml])
 
     const patch = (id: number, p: Partial<Step>): void => setSteps(s => s.map(x => (x.id === id ? { ...x, ...p } : x)))
     const move = (id: number, d: number): void =>
@@ -322,7 +357,7 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
 
     const exportYaml = (): void => {
         const a = document.createElement('a')
-        a.href = URL.createObjectURL(new Blob([yaml], { type: 'text/yaml' }))
+        a.href = URL.createObjectURL(new Blob([maskedYaml], { type: 'text/yaml' }))
         a.download = `${name.replace(/\W+/g, '_')}.scenario.yaml`
         a.click()
         URL.revokeObjectURL(a.href)
@@ -334,22 +369,32 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
         a.click()
         URL.revokeObjectURL(a.href)
     }
-    const share = async (): Promise<void> => {
+    const share = (): void => {
         setImportErr(undefined)
-        try {
-            const hash = `#/builder?s=${await deflate(yaml)}`
-            const full = location.origin + location.pathname + hash
+        setShareWarn(undefined)
+        setShareLink(undefined)
+        const proceed = (full: string, tryClipboard: boolean): void => {
             if (full.length > 8000) {
-                setImportErr('scenario too large for a share link — use .yaml export and send the file')
+                setShareWarn('scenario too large for a share link — use .yaml export and send the file')
                 return
             }
-            history.replaceState(null, '', hash)
-            await navigator.clipboard?.writeText(full)
-            setShared(true)
-            setTimeout(() => setShared(false), 1500)
-        } catch (e) {
-            setImportErr('share: ' + (e instanceof Error ? e.message : String(e)))
+            history.replaceState(null, '', full.slice(full.indexOf('#')))
+            // Show the link for manual copy if the platform blocks the clipboard (Safari /
+            // restricted context) — the address bar is updated regardless, so it's never an error.
+            const fallback = (): void => setShareLink(full)
+            if (!tryClipboard) return fallback()
+            try {
+                const p = navigator.clipboard?.writeText(full)
+                if (p) p.then(() => { setShared(true); setTimeout(() => setShared(false), 1500) }, fallback)
+                else fallback()
+            } catch {
+                fallback()
+            }
         }
+        if (shareUrl) proceed(shareUrl, true)
+        // Cold start (not precomputed yet): compute then show the link — no clipboard attempt
+        // after the await (Safari would block it anyway).
+        else void deflate(maskedYaml).then(s => proceed(`${location.origin}${location.pathname}#/builder?s=${s}`, false))
     }
 
     const run = async (): Promise<void> => {
@@ -427,7 +472,7 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                     <button onClick={exportYaml}>
                         <Icon name="download" /> .yaml
                     </button>
-                    <button onClick={() => void share()} title="copy a shareable link to this scenario">
+                    <button onClick={share} title="copy a shareable link to this scenario">
                         <Icon name={shared ? 'check' : 'link'} /> {shared ? 'copied' : 'share'}
                     </button>
                     <button onClick={clearScenario} title="drop the current scenario" style={{ color: 'var(--danger)' }}>
@@ -441,10 +486,24 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                 </div>
             )}
             {importErr && <div className="callout danger">import failed — {importErr}</div>}
+            {shareWarn && <div className="callout">{shareWarn}</div>}
+            {shareLink && (
+                <div className="callout">
+                    <div style={{ marginBottom: 6 }}>link ready — copy it (the address bar is updated too):</div>
+                    <input
+                        className="mono"
+                        readOnly
+                        value={shareLink}
+                        onFocus={e => e.currentTarget.select()}
+                        style={{ width: '100%', fontSize: 12, boxSizing: 'border-box' }}
+                        aria-label="share link"
+                    />
+                </div>
+            )}
 
             <Users users={users} setUsers={setUsers} spec={spec} />
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
+            <div className="builder-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
                 <div>
                     <div className="muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.04em', margin: '6px 0' }}>
                         steps
@@ -472,9 +531,42 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
 
                 <div>
                     <h2 style={{ marginTop: 0 }}>
-                        {name}.scenario.yaml <span className="muted" style={{ fontSize: 12 }}>· live</span>
+                        {name}.scenario.yaml <span className="muted" style={{ fontSize: 12 }}>· live · editable</span>
                     </h2>
-                    <pre className="preview">{yaml}</pre>
+                    <textarea
+                        className="preview yaml-edit"
+                        spellCheck={false}
+                        aria-label="scenario yaml (editable)"
+                        value={editingYaml ? (yamlDraft ?? yaml) : yaml}
+                        rows={Math.max(8, (editingYaml ? (yamlDraft ?? yaml) : yaml).split('\n').length + 1)}
+                        onFocus={() => {
+                            setEditingYaml(true)
+                            setYamlDraft(yaml)
+                        }}
+                        onChange={e => {
+                            const text = e.target.value
+                            setYamlDraft(text)
+                            try {
+                                const r = fromScenario(text)
+                                if (r.users.length) setUsers(r.users)
+                                setSteps(r.steps.length ? r.steps : [emptyStep('user')])
+                                setResults({})
+                                setYamlErr(undefined)
+                            } catch (err) {
+                                setYamlErr(err instanceof Error ? err.message : String(err))
+                            }
+                        }}
+                        onBlur={() => {
+                            setEditingYaml(false)
+                            setYamlDraft(null)
+                            setYamlErr(undefined)
+                        }}
+                    />
+                    {editingYaml && (
+                        <div className="muted" style={{ fontSize: 11, marginTop: 4, color: yamlErr ? 'var(--danger)' : 'var(--text3)' }}>
+                            {yamlErr ? `⚠ ${yamlErr}` : 'editing — valid changes sync to the steps on the left'}
+                        </div>
+                    )}
 
                     {log.length > 0 && (
                         <>
@@ -647,18 +739,11 @@ function StepCard({
                     />
                     {st.kind === 'invoke' ? (
                         <>
-                            <select
+                            <MethodPicker
+                                methods={methodNames}
                                 value={st.method}
-                                onChange={e => patch(st.id, { method: e.target.value, value: { _: e.target.value } })}
-                                style={{ width: '100%', marginBottom: 8 }}
-                            >
-                                <option value="">— method —</option>
-                                {methodNames.map(m => (
-                                    <option key={m} value={m}>
-                                        {m}
-                                    </option>
-                                ))}
-                            </select>
+                                onChange={m => patch(st.id, { method: m, value: { _: m } })}
+                            />
                             {ready && st.method && (
                                 <FieldsEditor defName={st.method} value={st.value} onChange={v => patch(st.id, { value: v })} />
                             )}
@@ -835,13 +920,13 @@ function labelOf(st: Step): string {
     return st.label || (st.kind === 'invoke' ? st.method || 'invoke' : `expectUpdate ${st.expect || ''}`.trim())
 }
 
-function toYaml(url: string, users: User[], steps: Step[]): string {
+function toYaml(url: string, users: User[], steps: Step[], mask = false): string {
     const out: string[] = ['target:', `    url: ${url}`]
     const multi = users.length > 1 || users.some(u => u.layer || u.recipe)
     if (multi) {
         out.push('users:')
         for (const u of users) {
-            const withInline = u.recipe && u.with?.trim() ? `, with: ${compactJson(u.with)}` : ''
+            const withInline = u.recipe && u.with?.trim() ? `, with: ${(mask ? maskWith : compactJson)(u.with)}` : ''
             const auth = u.recipe ? `auth: { recipe: ${u.recipe}${withInline} }` : ''
             const fields = [u.layer ? `layer: ${u.layer}` : '', auth].filter(Boolean).join(', ')
             out.push(`    ${u.name}: {${fields ? ` ${fields} ` : ''}}`)
@@ -868,4 +953,61 @@ function toYaml(url: string, users: User[], steps: Step[]): string {
         out.push(`    - { ${parts.join(', ')} }`)
     }
     return out.join('\n') + '\n'
+}
+
+/** Type-to-filter method picker. A native <select> is unusable with hundreds of
+ *  methods, so this is a combobox: focus to open, type to filter, click to choose. */
+function MethodPicker({ methods, value, onChange }: { methods: string[]; value: string; onChange: (m: string) => void }) {
+    const [open, setOpen] = useState(false)
+    const [q, setQ] = useState('')
+    const LIMIT = 60
+    const all = useMemo(() => {
+        const ql = q.trim().toLowerCase()
+        return ql ? methods.filter(m => m.toLowerCase().includes(ql)) : methods
+    }, [methods, q])
+    const shown = all.slice(0, LIMIT)
+    return (
+        <div className="combobox" style={{ marginBottom: 8 }}>
+            <input
+                value={open ? q : value}
+                placeholder="— method — (type to filter)"
+                onFocus={() => {
+                    setOpen(true)
+                    setQ('')
+                }}
+                onChange={e => {
+                    setQ(e.target.value)
+                    setOpen(true)
+                }}
+                onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+                style={{ width: '100%' }}
+            />
+            {open && (
+                <div className="combobox-list">
+                    {shown.length === 0 ? (
+                        <div className="combobox-more">no methods match “{q}”</div>
+                    ) : (
+                        shown.map(m => (
+                            <div
+                                key={m}
+                                className={'combobox-opt' + (m === value ? ' on' : '')}
+                                // onMouseDown (not onClick) so it fires before the input's blur closes the list
+                                onMouseDown={e => {
+                                    e.preventDefault()
+                                    onChange(m)
+                                    setOpen(false)
+                                    setQ('')
+                                }}
+                            >
+                                {m}
+                            </div>
+                        ))
+                    )}
+                    {all.length > shown.length && (
+                        <div className="combobox-more">… {all.length - shown.length} more — keep typing to narrow</div>
+                    )}
+                </div>
+            )}
+        </div>
+    )
 }
