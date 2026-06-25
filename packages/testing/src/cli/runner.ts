@@ -1,6 +1,6 @@
 import type { TlObject } from '@mt-tl/tl'
 import { RpcError, type TestSession, type ConnectOpts } from '../session.js'
-import { Scope, getByPath, type Generators } from './scope.js'
+import { Scope, getByPath, userScope, type Generators } from './scope.js'
 import { match, toUpdatePredicate, type Matcher } from './match.js'
 import { formatStep } from './report.js'
 import type { AuthSpec, Scenario, Step, TargetSpec } from './scenario.js'
@@ -74,8 +74,11 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
             if (spec.auth) await runAuth(user, spec.auth, session, scope, opts, scenario.target, record)
         }
 
-        // 2) Run the scenario steps.
+        // 2) Run the scenario steps. A `nonBlocking` expectUpdate registers its
+        //    expectation and proceeds; all deferred expectations are settled after
+        //    the loop (order-independent — see step 3).
         const userNames = Object.keys(scenario.users ?? {})
+        const deferred: Array<{ base: { index: number; user: string; label: string }; promise: Promise<unknown>; capture?: Record<string, string>; started: number }> = []
         for (let i = 0; i < scenario.steps.length; i++) {
             const step = scenario.steps[i]!
             const user = step.as ?? (userNames.length <= 1 ? (userNames[0] ?? 'default') : undefined)
@@ -91,7 +94,33 @@ export async function runScenario(scenario: Scenario, opts: RunOptions): Promise
                 continue
             }
             const session = await getSession(user)
+            if (step.expectUpdate !== undefined && step.nonBlocking) {
+                const timeoutMs = step.timeoutMs ?? scenario.target.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS
+                const promise = session.expectUpdate(toUpdatePredicate(step.expectUpdate, scope), { timeoutMs })
+                // swallow late rejection so an unsettled promise can't crash the process
+                promise.catch(() => {})
+                deferred.push({
+                    base: { index: i, user, label: `${step.label ?? labelOf(step)} [non-blocking]` },
+                    promise,
+                    capture: step.capture,
+                    started: Date.now(),
+                })
+                continue
+            }
             record(await runStep(i, user, step, session, scope, scenario.target, opts.recipes))
+        }
+
+        // 3) Settle deferred non-blocking expectations: each passes if its update
+        //    arrived (in any order) within its timeout, fails otherwise. Updates that
+        //    matched no expectation were simply ignored.
+        for (const d of deferred) {
+            try {
+                const update = (await d.promise) as TlObject
+                applyCaptures(d.capture, update, scope)
+                record({ ...d.base, ok: true, durationMs: Date.now() - d.started })
+            } catch (e) {
+                record({ ...d.base, ok: false, durationMs: Date.now() - d.started, error: errMsg(e) })
+            }
         }
     } finally {
         for (const s of sessions.values()) s.close()
@@ -131,7 +160,7 @@ async function runAuth(
                     session,
                     user,
                     args: scope.interpolate(auth.with ?? {}) as Record<string, unknown>,
-                    scope,
+                    scope: userScope(scope, user),
                 })
                 record({ ...base, ok: true, durationMs: Date.now() - started })
             } catch (e) {
@@ -161,7 +190,7 @@ async function runStep(
         if (step.recipe !== undefined) {
             const recipe = recipes?.[step.recipe]
             if (!recipe) throw new Error(`recipe '${step.recipe}' not found (pass --recipes)`)
-            await recipe({ session, user, args: scope.interpolate(step.with ?? {}) as Record<string, unknown>, scope })
+            await recipe({ session, user, args: scope.interpolate(step.with ?? {}) as Record<string, unknown>, scope: userScope(scope, user) })
         } else if (step.invoke !== undefined) {
             const params = scope.interpolate(step.params ?? {}) as Record<string, unknown>
             if (step.expectError) {

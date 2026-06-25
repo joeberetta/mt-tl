@@ -109,3 +109,28 @@ function getPath(obj: unknown, path: string): unknown {
 export function getByPath(obj: unknown, path: string): unknown {
     return getPath(obj, path)
 }
+
+/**
+ * A view over `scope` whose `set(key, value)` ALSO writes the key namespaced under
+ * `user` (`${user}.key`) — so one user's recipe captures are referenceable from
+ * another user's steps as `${user.key}` even when the recipe sets a FLAT key (e.g.
+ * `scope.set('userId', id)`). A key the recipe already namespaced (`${user}.…`) is
+ * written once. Mirrors @mt-tl/studio's builder, which merges recipe captures both
+ * flat and per-user. All other methods (get/interpolate) delegate unchanged.
+ */
+export function userScope(scope: Scope, user: string): Scope {
+    if (!user) return scope
+    const prefix = `${user}.`
+    return new Proxy(scope, {
+        get(target, prop, receiver) {
+            if (prop === 'set') {
+                return (key: string, value: unknown): void => {
+                    target.set(key, value)
+                    if (!key.startsWith(prefix)) target.set(prefix + key, value)
+                }
+            }
+            const v = Reflect.get(target, prop, receiver)
+            return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+        },
+    })
+}

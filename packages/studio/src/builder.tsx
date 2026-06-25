@@ -26,7 +26,7 @@ const DRAFT_KEY = 'mt-tl-studio.scenario'
 const toHexStr = (b: Uint8Array): string => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
 
 interface RunResult {
-    status: 'ok' | 'err' | 'mismatch'
+    status: 'ok' | 'err' | 'mismatch' | 'pending'
     text: string
     detail?: string
     msgId?: string
@@ -356,8 +356,10 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                         if (!recipe) throw new Error(`recipe "${u.recipe}" not found`)
                         const extra = u.with?.trim() ? (scope.interpolate(JSON.parse(u.with)) as Record<string, unknown>) : {}
                         const rScope = await runRecipeCode(recipe, s, msg => line(`  [${u.name}] ${msg}`), extra)
-                        // recipe captures (ctx.set) become referenceable in steps via ${key}
-                        for (const [k, v] of Object.entries(rScope)) scope.set(k, v)
+                        // Recipe captures (ctx.set) become referenceable in steps both flat
+                        // (`${key}`, last writer wins) AND namespaced by user (`${user2.userId}`)
+                        // — so one user's step can use another user's login result.
+                        mergeCaptures(scope, u.name, rScope)
                     }
                     sessions.set(u.name, s)
                     line(`connected ${u.name}${u.layer ? ` @layer ${u.layer}` : ''}${u.authMode === 'recipe' && u.recipe ? ` · auth ${u.recipe}` : ''}`, 'ok')
@@ -373,15 +375,41 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                     if (firstStep) setResults(p => ({ ...p, [firstStep.id]: { status: 'err', text: 'user not connected' } }))
                 }
             }
+            // Non-blocking expectUpdate steps registered here, settled after the loop.
+            const deferred: Array<{ st: Step; s: BrowserSession; tag: string; promise: Promise<BObject> }> = []
             for (let i = 0; i < steps.length; i++) {
                 const st = steps[i]!
                 const s = sessions.get(st.as)
+                const tag = `#${i + 1} [${st.as}] ${labelOf(st)}`
                 if (!s) {
                     setResults(p => ({ ...p, [st.id]: { status: 'err', text: `user "${st.as}" has no session` } }))
-                    line(`✕ #${i + 1} [${st.as}] ${labelOf(st)}: no session`, 'err')
+                    line(`✕ ${tag}: no session`, 'err')
                     continue
                 }
-                await runStep(st, s, scope, setResults, line, `#${i + 1} [${st.as}] ${labelOf(st)}`)
+                if (st.kind === 'expectUpdate' && st.nonBlocking) {
+                    const pred = (u: BObject): boolean => matchAll(u, st.expect, st.matchSpec, scope).ok
+                    const timeoutMs = st.timeoutSec ? Number(st.timeoutSec) * 1000 : undefined
+                    const promise = s.expectUpdate(pred, timeoutMs)
+                    promise.catch(() => {}) // swallow late rejection; settled below
+                    deferred.push({ st, s, tag, promise })
+                    setResults(p => ({ ...p, [st.id]: { status: 'pending', text: 'armed — waiting (non-blocking)…' } }))
+                    line(`… ${tag}: armed (non-blocking)`)
+                    continue
+                }
+                await runStep(st, s, scope, setResults, line, tag)
+            }
+            // Settle non-blocking expectations: order-independent, extras ignored.
+            for (const d of deferred) {
+                try {
+                    const u = await d.promise
+                    setResults(p => ({ ...p, [d.st.id]: { status: 'ok', text: `got ${u._}`, detail: jsonView(u) } }))
+                    line(`✓ ${d.tag}: update ${u._}`, 'ok')
+                } catch (e) {
+                    const { hint, detail } = updateTimeoutHint(d.s, d.st.expect)
+                    const msg = (e instanceof Error ? e.message : String(e)) + hint
+                    setResults(p => ({ ...p, [d.st.id]: { status: 'err', text: msg, detail } }))
+                    line(`✕ ${d.tag}: ${msg}`, 'err')
+                }
             }
             line('done', 'ok')
         } finally {
@@ -908,10 +936,15 @@ function StepCard({
                                 onChange={e => patch(st.id, { matchSpec: e.target.value })}
                                 style={{ width: '100%', marginTop: 6, fontSize: 12 }}
                             />
+                            <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 6 }}
+                                title="don't block — register the expectation, keep running, and check it after all steps (order-independent)">
+                                <input type="checkbox" checked={st.nonBlocking} onChange={e => patch(st.id, { nonBlocking: e.target.checked })} />
+                                non-blocking (check at the end, any order)
+                            </label>
                         </>
                     )}
                     {res && (
-                        <div className={'result ' + (res.status === 'ok' ? 'ok' : 'err')} style={{ marginTop: 8 }}>
+                        <div className={'result ' + (res.status === 'ok' ? 'ok' : res.status === 'pending' ? '' : 'err')} style={{ marginTop: 8 }}>
                             <div
                                 className="result-head"
                                 onClick={res.detail ? onToggleResult : undefined}
@@ -921,8 +954,8 @@ function StepCard({
                                 {res.detail && (
                                     <Icon name={resultOpen ? 'chevron-down' : 'chevron-right'} style={{ fontSize: 11, marginRight: 4 }} />
                                 )}
-                                <span className="mono" style={{ color: res.status === 'ok' ? 'var(--ok)' : 'var(--danger)' }}>
-                                    {res.status === 'ok' ? '✓' : '✕'} {res.text}
+                                <span className="mono" style={{ color: res.status === 'ok' ? 'var(--ok)' : res.status === 'pending' ? 'var(--text2)' : 'var(--danger)' }}>
+                                    {res.status === 'ok' ? '✓' : res.status === 'pending' ? '…' : '✕'} {res.text}
                                 </span>
                                 {res.msgId && (
                                     <span className="id" style={{ marginLeft: 'auto' }}>
@@ -941,6 +974,31 @@ function StepCard({
             )}
         </div>
     )
+}
+
+/** Merge a recipe's captured scope into the run scope: flat (`${key}`, last writer wins)
+ *  AND namespaced by user (`${user2.userId}`) so a step can reference another user's
+ *  login result. Mirrors @mt-tl/testing's `scope.set(`${user}.id`, …)` convention. */
+function mergeCaptures(scope: Scope, user: string, rScope: Record<string, unknown>): void {
+    for (const [k, v] of Object.entries(rScope)) {
+        scope.set(k, v)
+        if (user) scope.set(`${user}.${k}`, v)
+    }
+}
+
+/** On an expectUpdate timeout, summarize what DID arrive on the session — usually the
+ *  real update is wrapped (updateShort/updates/…), so its top-level `_` differs from
+ *  the match. Empty ⇒ the session got no pushes at all. */
+function updateTimeoutHint(s: BrowserSession, expect: string): { hint: string; detail?: string } {
+    const seen = s.bufferedUpdates
+    if (!seen.length) {
+        return { hint: ' · no updates arrived on this session (is it the authed recipient? some servers only push to an online user)' }
+    }
+    const types = [...new Set(seen.map(u => u._))].join(', ')
+    return {
+        hint: ` · received instead: ${types} (match a nested field, e.g. matchSpec "update._ = ${expect || 'updateNewMessage'}")`,
+        detail: jsonView(seen as unknown as BValue),
+    }
 }
 
 /** Check a decoded value against an `_` constructor + extra `path = value` match fields. */
@@ -987,7 +1045,7 @@ async function runStep(
         try {
             const extra = st.with?.trim() ? (scope.interpolate(JSON.parse(st.with)) as Record<string, unknown>) : {}
             const rScope = await runRecipeCode(recipe, s, msg => line(`  ${msg}`), extra)
-            for (const [k, v] of Object.entries(rScope)) scope.set(k, v)
+            mergeCaptures(scope, st.as, rScope)
             set({ status: 'ok', text: `recipe ${st.recipe}`, detail: Object.keys(rScope).length ? jsonView(rScope as BValue) : undefined })
             line(`✓ ${tag}`, 'ok')
         } catch (e) {
@@ -1006,8 +1064,10 @@ async function runStep(
             set({ status: 'ok', text: `got ${u._}`, detail: jsonView(u) })
             line(`✓ ${tag}: update ${u._}`, 'ok')
         } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e)
-            set({ status: 'err', text: msg })
+            // On timeout, surface what DID arrive (usually a wrapped update type).
+            const { hint, detail } = updateTimeoutHint(s, st.expect)
+            const msg = (e instanceof Error ? e.message : String(e)) + hint
+            set({ status: 'err', text: msg, detail })
             line(`✕ ${tag}: ${msg}`, 'err')
         }
         return

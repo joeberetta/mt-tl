@@ -195,6 +195,12 @@ export class BrowserSession {
         })
     }
 
+    /** Updates received but not matched/consumed by an expectUpdate yet — for
+     *  diagnostics (e.g. show what DID arrive when an expectUpdate times out). */
+    get bufferedUpdates(): BObject[] {
+        return [...this.updates]
+    }
+
     /** Keep the receive loop alive and route EVERY pushed update to `onUpdate`
      *  (for the Listen tool) until {@link stopListening} or {@link close}. */
     listen(onUpdate: (update: BObject) => void): void {

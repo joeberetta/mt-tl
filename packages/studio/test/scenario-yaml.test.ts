@@ -38,7 +38,7 @@ function sampleState(): ScenarioState {
         steps: [
             mkStep({ as: 'alice', kind: 'invoke', method: 'crypto.sendCode', value: { _: 'crypto.sendCode', api_id: 1001, api_hash: '${tag}' }, expect: 'dataJSON', matchSpec: 'data = ${tag}', capture: 'alice.echo = data' }),
             mkStep({ as: 'nyx', kind: 'invoke', method: 'updates.getState', value: { _: 'updates.getState' }, expectMode: 'error', expect: '401', errorMessage: 'AUTH_KEY_INVALID' }),
-            mkStep({ as: 'alice', kind: 'expectUpdate', expect: 'updateShort', matchSpec: 'update.wallet_id = w1', timeoutSec: '2' }),
+            mkStep({ as: 'alice', kind: 'expectUpdate', expect: 'updateShort', matchSpec: 'update.wallet_id = w1', timeoutSec: '2', nonBlocking: true }),
             mkStep({ as: 'bob', kind: 'recipe', recipe: 'warmup', with: '{"k":1}' }),
         ],
     }
@@ -78,6 +78,7 @@ describe('scenario-yaml ⇄ @mt-tl/testing validateScenario', () => {
         const upd = steps.find(s => s.expectUpdate)
         expect(upd.expectUpdate).toEqual({ _: 'updateShort', 'update.wallet_id': 'w1' })
         expect(upd.timeoutMs).toBe(2000)
+        expect(upd.nonBlocking).toBe(true)
 
         const recipe = steps.find(s => s.recipe)
         expect(recipe).toMatchObject({ recipe: 'warmup', with: { k: 1 } })
@@ -105,6 +106,7 @@ describe('scenario-yaml ⇄ @mt-tl/testing validateScenario', () => {
         expect(err.errorMessage).toBe('AUTH_KEY_INVALID')
         const upd = back.steps.find(s => s.kind === 'expectUpdate')!
         expect(upd.matchSpec).toBe('update.wallet_id = w1')
+        expect(upd.nonBlocking).toBe(true)
         expect(back.steps.find(s => s.kind === 'recipe')!.recipe).toBe('warmup')
     })
 

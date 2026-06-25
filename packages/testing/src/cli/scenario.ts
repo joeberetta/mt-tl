@@ -64,6 +64,12 @@ export interface Step {
     expectError?: { code?: number; message?: string }
     /** Wait for a pushed update matching this. */
     expectUpdate?: Matcher
+    /** For `expectUpdate`: DON'T block the scenario — register the expectation and
+     *  proceed to the next step; it's checked (pass/fail) after all steps run. The
+     *  set of non-blocking expectations is order-INDEPENDENT: each matches whenever
+     *  its update arrives, and updates matching no expectation are ignored (never an
+     *  error). Lets you arm an expectation before the step that triggers it. */
+    nonBlocking?: boolean
     /** Capture values into the scope: `{ 'scope.path': 'result.path' }`. */
     capture?: Record<string, string>
     /** Override the step timeout (ms). */

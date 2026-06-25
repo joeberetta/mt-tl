@@ -49,6 +49,8 @@ export interface Step {
     matchSpec: string
     /** expectUpdate (and any step): wait/timeout in seconds. */
     timeoutSec: string
+    /** expectUpdate: don't block — register the expectation, run on, check at the end. */
+    nonBlocking: boolean
     /** invoke captures: `scopeKey = result.path, …` → referenceable later as `${scopeKey}`. */
     capture: string
     // recipe
@@ -73,6 +75,7 @@ export const emptyStep = (as: string, nid: Nid): Step => ({
     errorMessage: '',
     matchSpec: '',
     timeoutSec: '',
+    nonBlocking: false,
     capture: '',
     recipe: '',
     with: '',
@@ -169,6 +172,7 @@ function stepFlow(st: Step, includeAs: boolean): string {
     } else {
         const body = matchBody(st.expect || 'TODO', st.matchSpec)
         parts.push(`expectUpdate: { ${body.join(', ')} }`)
+        if (st.nonBlocking) parts.push(`nonBlocking: true`)
         if (st.timeoutSec) parts.push(`timeoutMs: ${Number(st.timeoutSec) * 1000}`)
     }
     return `{ ${parts.join(', ')} }`
@@ -229,6 +233,7 @@ function parseStep(raw: any, fallbackUser: string, nid: Nid): Step {
         st.with = raw.with ? JSON.stringify(raw.with) : ''
     } else if (raw?.expectUpdate !== undefined) {
         st.kind = 'expectUpdate'
+        st.nonBlocking = !!raw.nonBlocking
         const m = raw.expectUpdate
         if (typeof m === 'string') {
             st.expect = m

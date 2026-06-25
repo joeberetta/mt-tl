@@ -221,6 +221,105 @@ describe('mtproto-test CLI runner', () => {
         expect(report.steps.find(s => s.label === 'recipe warmup')?.ok).toBe(true)
     })
 
+    it('namespaces recipe captures by user → ${otherUser.key} resolves across users', async () => {
+        // The recipe sets a FLAT key (no per-user prefix); the runner namespaces it so
+        // one user's step can reference another user's login result (e.g. a peer id).
+        const recipes: RecipeMap = {
+            signup: async ({ scope, user }) => {
+                scope.set('userId', user === 'bob' ? '22' : '11')
+            },
+        }
+        const report = await runScenario(
+            {
+                target: { url: server.url },
+                users: {
+                    alice: { auth: { recipe: 'signup' } },
+                    bob: { auth: { recipe: 'signup' } },
+                },
+                steps: [
+                    // alice references BOB's captured userId — crypto.sendCode echoes api_hash into `data`.
+                    {
+                        as: 'alice',
+                        invoke: 'crypto.sendCode',
+                        params: { public_key: '', api_id: 1, api_hash: '${bob.userId}' },
+                        expect: { data: '22' },
+                    },
+                ],
+            },
+            { connect: () => server.connect(), recipes },
+        )
+        expect(report.ok).toBe(true)
+        expect(report.steps.every(s => s.ok)).toBe(true)
+    })
+
+    it('runs a non-blocking expectUpdate: armed before its trigger, settled at the end', async () => {
+        const report = await runScenario(
+            {
+                target: { url: server.url },
+                users: {
+                    // login binds the subject so help.getServerConfig can push to alice.
+                    alice: { auth: { steps: [{ invoke: 'crypto.sendCode', params: { public_key: '', api_id: 1, api_hash: 'a' } }] } },
+                },
+                steps: [
+                    // Armed FIRST but non-blocking — would DEADLOCK if it blocked, since the
+                    // push is only emitted by the NEXT step. Order-independent + checked at end.
+                    { as: 'alice', label: 'await-push', expectUpdate: { _: 'updateShort' }, nonBlocking: true, timeoutMs: 2000 },
+                    { as: 'alice', invoke: 'help.getServerConfig' },
+                ],
+            },
+            { connect: () => server.connect() },
+        )
+        expect(report.ok).toBe(true)
+        const awaited = report.steps.find(s => s.label.startsWith('await-push'))
+        expect(awaited?.ok).toBe(true)
+        expect(awaited?.label).toContain('[non-blocking]')
+    })
+
+    it('two non-blocking expectUpdates each consume one of two pushes (count assertion)', async () => {
+        const report = await runScenario(
+            {
+                target: { url: server.url },
+                users: {
+                    alice: { auth: { steps: [{ invoke: 'crypto.sendCode', params: { public_key: '', api_id: 1, api_hash: 'a' } }] } },
+                },
+                steps: [
+                    // Two armed expectations (same matcher); each grabs a distinct update.
+                    { as: 'alice', label: 'msg1', expectUpdate: { _: 'updateShort' }, nonBlocking: true, timeoutMs: 2000 },
+                    { as: 'alice', label: 'msg2', expectUpdate: { _: 'updateShort' }, nonBlocking: true, timeoutMs: 2000 },
+                    { as: 'alice', invoke: 'help.getServerConfig' }, // push #1
+                    { as: 'alice', invoke: 'help.getServerConfig' }, // push #2
+                ],
+            },
+            { connect: () => server.connect() },
+        )
+        expect(report.ok).toBe(true)
+        expect(report.steps.find(s => s.label.startsWith('msg1'))?.ok).toBe(true)
+        expect(report.steps.find(s => s.label.startsWith('msg2'))?.ok).toBe(true)
+    })
+
+    it('fails a non-blocking expectUpdate that never arrives, without erroring on other updates', async () => {
+        const report = await runScenario(
+            {
+                target: { url: server.url },
+                users: {
+                    alice: { auth: { steps: [{ invoke: 'crypto.sendCode', params: { public_key: '', api_id: 1, api_hash: 'a' } }] } },
+                },
+                steps: [
+                    // This update type never comes; the unrelated updateShort push must NOT error it.
+                    { as: 'alice', label: 'never', expectUpdate: { _: 'updateNeverHappens' }, nonBlocking: true, timeoutMs: 300 },
+                    { as: 'alice', invoke: 'help.getServerConfig' }, // pushes an (ignored) updateShort
+                ],
+            },
+            { connect: () => server.connect() },
+        )
+        expect(report.ok).toBe(false)
+        const never = report.steps.find(s => s.label.startsWith('never'))
+        expect(never?.ok).toBe(false)
+        expect(never?.error).toMatch(/timed out/)
+        // the invoke step itself still succeeded — the stray update didn't break anything
+        expect(report.steps.find(s => s.label === 'invoke help.getServerConfig')?.ok).toBe(true)
+    })
+
     it('connects users on per-user layers and supports anonymous (no-auth) sessions', async () => {
         const seen = new Map<string, ConnectOpts | undefined>()
         const report = await runScenario(
