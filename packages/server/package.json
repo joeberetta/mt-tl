@@ -1,6 +1,6 @@
 {
     "name": "@mt-tl/server",
-    "version": "0.1.12",
+    "version": "0.1.13",
     "type": "module",
     "description": "An MTProto 2.0 server framework (Fastify-style): createServer, routes, plugins, hooks, server-push. Ships the full protocol engine — WebSocket/raw-TCP transport, handshake, AES-IGE crypto, sessions, TL (de)serialization, layered encoding — plus the handler layer, in one install.",
     "license": "MIT",

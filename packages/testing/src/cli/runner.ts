@@ -242,10 +242,16 @@ function assertMatch(matcher: Matcher | undefined, actual: TlObject, scope: Scop
     const r = match(matcher, actual, scope)
     if (!r.ok) {
         const detail = r.mismatches
-            .map(m => `${m.path}: expected ${JSON.stringify(m.expected)}, got ${JSON.stringify(m.actual)}`)
+            .map(m => `${m.path}: expected ${jsonSafe(m.expected)}, got ${jsonSafe(m.actual)}`)
             .join('; ')
         throw new Error(`expect failed (${detail})`)
     }
+}
+
+/** Compact JSON for mismatch detail. TL `long`/`int128` decode to BigInt, which raw
+ *  JSON.stringify rejects — render bigint as its decimal string instead of throwing. */
+function jsonSafe(v: unknown): string {
+    return JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)) ?? String(v)
 }
 
 function applyCaptures(capture: Record<string, string> | undefined, source: TlObject, scope: Scope): void {

@@ -1033,7 +1033,9 @@ function matchAll(
 function applyCaptures(captureSpec: string, source: BObject, scope: Scope, line: (text: string) => void): void {
     for (const [key, path] of parsePairs(captureSpec)) {
         scope.set(key, getByPath(source, path))
-        line(`  captured ${key} = ${JSON.stringify(scope.get(key))}`)
+        // jsonView (not raw JSON.stringify): a captured TL `long`/`int128` decodes to a
+        // BigInt, which JSON.stringify rejects; jsonView renders bigint→string, bytes→0x.
+        line(`  captured ${key} = ${jsonView(scope.get(key) as BValue)}`)
     }
 }
 
