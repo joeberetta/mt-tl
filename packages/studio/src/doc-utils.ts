@@ -1,4 +1,5 @@
 import type { ApiSpec, SpecSymbol, SpecShape } from './spec-types.js'
+import { shapeAt } from './spec-access.js'
 
 /** Reconstruct the one-line `.tl` for a symbol at a given layer's shape:
  *  `name#id p1:type1 p2:type2 = ResultType;` (the canonical TL definition line). */
@@ -19,7 +20,7 @@ export function typeUsage(spec: ApiSpec, typeName: string, layer: number): { ret
     const usedBy: UsageRef[] = []
     const all = [...Object.values(spec.methods), ...Object.values(spec.constructors)]
     for (const s of all) {
-        const shape = s.byLayer[layer]
+        const shape = shapeAt(s, layer)
         if (!shape) continue
         if (s.kind === 'method' && (s.type === typeName || s.type === `Vector<${typeName}>`)) returnedBy.push({ name: s.name, kind: s.kind })
         if (shape.params.some(p => p.ref === typeName)) usedBy.push({ name: s.name, kind: s.kind })
@@ -51,8 +52,8 @@ export function computeLayerDiff(spec: ApiSpec, layer: number): LayerDiff {
     const removed: ChangeEntry[] = []
     const all = [...Object.values(spec.methods), ...Object.values(spec.constructors)]
     for (const s of all) {
-        const cur = s.byLayer[layer]
-        const before = prev !== undefined ? s.byLayer[prev] : undefined
+        const cur = shapeAt(s, layer)
+        const before = prev !== undefined ? shapeAt(s, prev) : undefined
         if (cur && !before) {
             added.push({ name: s.name, kind: s.kind, line: tlLine(s, cur) })
         } else if (!cur && before) {
@@ -76,8 +77,8 @@ export function computeRangeDiff(spec: ApiSpec, from: number, to: number): Layer
     const removed: ChangeEntry[] = []
     const all = [...Object.values(spec.methods), ...Object.values(spec.constructors)]
     for (const s of all) {
-        const a = s.byLayer[from]
-        const b = s.byLayer[to]
+        const a = shapeAt(s, from)
+        const b = shapeAt(s, to)
         if (b && !a) added.push({ name: s.name, kind: s.kind, line: tlLine(s, b) })
         else if (a && !b) removed.push({ name: s.name, kind: s.kind, line: tlLine(s, a) })
         else if (a && b) {

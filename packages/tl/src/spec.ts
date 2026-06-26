@@ -12,15 +12,17 @@ const protocolSchemaDir = fileURLToPath(new URL('../schema', import.meta.url))
 /**
  * A machine-readable, **layer-aware** API spec built from the frozen per-layer
  * snapshots (`<prefix><N>.json`, prefix default `scheme_`) — the "OpenAPI for TL" that `@mt-tl/studio`
- * renders. Per symbol we keep its shape at every layer it appears in, so the UI
- * can pin the view to a layer, show per-field `since`/`removed` badges, and diff
- * the history. Descriptions (authored MD) are merged by the studio at render
+ * renders. Per symbol we keep its distinct shapes, run-length-encoded across the
+ * layers it appears in (consecutive layers sharing a wire id collapse into one
+ * {@link SpecShapeRun}), so the UI can pin the view to a layer, show per-field
+ * `since`/`removed` badges, and diff the history without 20 identical copies.
+ * Descriptions (authored MD) are merged by the studio at render
  * time — this file is pure schema.
  *
  * Layer lifecycle is tracked on three levels — a symbol (method/constructor) can
  * be removed, a field can be removed (and its type can change), and a whole type
  * can disappear: each carries `since` + `until`/`removed`. A field's type change
- * is visible by diffing its shape across {@link SpecSymbol.byLayer}.
+ * is visible by diffing its shape across {@link SpecSymbol.shapes}.
  *
  * Source of truth is the snapshots, not the in-progress `.tl` (which isn't a
  * shipped layer until you `mt-tl freeze` it). Snapshots are business-only.
@@ -52,7 +54,22 @@ export interface SpecShape {
     params: SpecParam[]
 }
 
-/** A method or constructor, with its shape at every layer it exists on. */
+/**
+ * A distinct shape of a symbol, valid across a contiguous run of layers `[from, to]`
+ * (run-length-encoded: consecutive layers sharing the same wire `id` collapse into
+ * one entry). Replaces the old per-layer `byLayer` map — far fewer copies when a
+ * symbol is stable across many layers.
+ */
+export interface SpecShapeRun {
+    id: string
+    params: SpecParam[]
+    /** First layer (in {@link ApiSpec.layers} order) this shape applies to. */
+    from: number
+    /** Last layer this shape applies to before it changes or the symbol disappears. */
+    to: number
+}
+
+/** A method or constructor, with its distinct shapes across the layers it exists on. */
 export interface SpecSymbol {
     name: string
     kind: 'method' | 'constructor'
@@ -66,10 +83,14 @@ export interface SpecSymbol {
     removed: boolean
     /** The first layer (after `lastLayer`) where the symbol is absent — present iff `removed`. */
     removedIn?: number
-    /** Shape at {@link lastLayer}. */
-    latest: SpecShape
-    /** Shape keyed by layer — only layers where the symbol is present. */
-    byLayer: Record<number, SpecShape>
+    /**
+     * Distinct shapes, run-length-encoded over the layers the symbol is present,
+     * sorted by `from`. Resolve "shape at layer L" by the run whose `[from, to]`
+     * covers L (no covering run ⇒ the symbol doesn't exist at L). A new run starts
+     * when the wire `id` changes OR the symbol is absent on an intervening layer,
+     * so gaps in presence are preserved.
+     */
+    shapes: SpecShapeRun[]
 }
 
 /** An abstract type and the constructors that ever inhabit it. */
@@ -84,6 +105,8 @@ export interface SpecType {
 }
 
 export interface ApiSpec {
+    /** Output format version. `2` = run-length {@link SpecSymbol.shapes} (was `1`/absent = per-layer `byLayer`). */
+    version: number
     /** Sorted ascending list of layers found in the snapshots. */
     layers: number[]
     latestLayer: number
@@ -91,6 +114,16 @@ export interface ApiSpec {
     constructors: Record<string, SpecSymbol>
     types: Record<string, SpecType>
 }
+
+/** Current {@link ApiSpec.version}. Bump when the emitted shape changes. */
+export const SPEC_VERSION = 2
+
+/**
+ * Working symbol used while folding snapshots: the output {@link SpecSymbol} but
+ * with the per-layer `byLayer` map, which {@link finalizeSymbols} run-length-encodes
+ * into {@link SpecSymbol.shapes}.
+ */
+type BuildSymbol = Omit<SpecSymbol, 'shapes'> & { byLayer: Record<number, SpecShape> }
 
 interface RawEntry {
     id: string
@@ -205,10 +238,10 @@ export function buildApiSpec(
 
     const layers = snaps.map(s => s.layer)
     const latestLayer = layers.at(-1) ?? 0
-    const methods: Record<string, SpecSymbol> = {}
-    const constructors: Record<string, SpecSymbol> = {}
+    const methods: Record<string, BuildSymbol> = {}
+    const constructors: Record<string, BuildSymbol> = {}
 
-    const ingest = (kind: 'method' | 'constructor', bag: Record<string, SpecSymbol>) => {
+    const ingest = (kind: 'method' | 'constructor', bag: Record<string, BuildSymbol>) => {
         for (const { layer, snap } of snaps) {
             for (const e of kind === 'method' ? snap.methods : snap.constructors) {
                 const name = (e.predicate ?? e.method)!
@@ -222,13 +255,11 @@ export function buildApiSpec(
                         sinceLayer: layer,
                         lastLayer: layer,
                         removed: false,
-                        latest: shape,
                         byLayer: { [layer]: shape },
                     }
                 } else {
                     sym.byLayer[layer] = shape
                     sym.lastLayer = layer
-                    sym.latest = shape
                     sym.type = e.type
                 }
             }
@@ -286,7 +317,46 @@ export function buildApiSpec(
         t.constructors.sort()
     }
 
-    return { layers, latestLayer, methods, constructors, types }
+    return {
+        version: SPEC_VERSION,
+        layers,
+        latestLayer,
+        methods: finalizeSymbols(methods, layers),
+        constructors: finalizeSymbols(constructors, layers),
+        types,
+    }
+}
+
+/**
+ * Run-length-encode a built symbol's per-layer `byLayer` map into {@link SpecShapeRun}s.
+ * Walk the canonical `layers` list (not numeric ±1): a numbering gap (a layer that
+ * was never shipped) is transparent — neighbours in `layers` merge if their wire id
+ * matches; a *presence* gap (the symbol absent on a shipped layer) breaks the run, so
+ * `shapeAt` on that layer resolves to nothing.
+ */
+function foldShapes(byLayer: Record<number, SpecShape>, layers: number[]): SpecShapeRun[] {
+    const shapes: SpecShapeRun[] = []
+    let prevPresent = false
+    for (const L of layers) {
+        const shape = byLayer[L]
+        if (!shape) {
+            prevPresent = false
+            continue
+        }
+        const last = shapes.at(-1)
+        if (last && prevPresent && last.id === shape.id) last.to = L
+        else shapes.push({ id: shape.id, params: shape.params, from: L, to: L })
+        prevPresent = true
+    }
+    return shapes
+}
+
+/** Finalize built symbols: fold `byLayer` into run-length `shapes`, drop the map. */
+function finalizeSymbols(bag: Record<string, BuildSymbol>, layers: number[]): Record<string, SpecSymbol> {
+    const out: Record<string, SpecSymbol> = {}
+    for (const [name, { byLayer, ...rest }] of Object.entries(bag))
+        out[name] = { ...rest, shapes: foldShapes(byLayer, layers) }
+    return out
 }
 
 function emptyType(name: string): SpecType {

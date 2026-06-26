@@ -1,6 +1,6 @@
 {
     "name": "@mt-tl/studio",
-    "version": "0.1.10",
+    "version": "0.1.12",
     "type": "module",
     "description": "Self-hosted interactive explorer + playground for an MTProto TL schema — the \"Swagger/Redoc for MTProto\". Point it at your .tl layers, get a static doc site with a layer-aware reference, scenario guides and a try-it playground.",
     "license": "MIT",
@@ -32,7 +32,7 @@
     },
     "scripts": {
         "dev": "vite",
-        "build:app": "vite build && rm -f dist/app/api.json dist/app/wire.json dist/app/scenarios.json dist/app/changelog.json dist/app/descriptions.json",
+        "build:app": "vite build && rm -rf dist/app/api.json dist/app/wire.json dist/app/scenarios.json dist/app/descriptions.json dist/app/changelog.json dist/app/scenarios dist/app/descriptions dist/app/changelog",
         "build:cli": "tsc -p tsconfig.cli.json",
         "build": "rm -rf dist && yarn build:app && yarn build:cli",
         "prepack": "yarn build",

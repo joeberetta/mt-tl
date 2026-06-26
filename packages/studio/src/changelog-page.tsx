@@ -3,28 +3,30 @@ import { Icon } from './icon.js'
 import { marked } from 'marked'
 import { LayerCtx } from './layer-context.js'
 import { computeLayerDiff, computeRangeDiff, type ChangeEntry } from './doc-utils.js'
+import { useDoc } from './doc-fetch.js'
 import type { ApiSpec } from './spec-types.js'
 
 /**
  * Per-layer changelog: an auto-diff of the schema vs the previous layer
- * (added / changed / removed), with an optional authored prose intro
- * (`changelog/<N>.md`, bundled as changelog.json). Like core.telegram.org/api/layers.
+ * (added / changed / removed), with an optional authored prose intro fetched lazily
+ * per layer (`changelog/<N>.md`, listed in changelog/index.json). Like core.telegram.org/api/layers.
  */
 export function ChangelogPage({ spec }: { spec: ApiSpec }) {
     const { layer, setLayer } = useContext(LayerCtx)
-    const [prose, setProse] = useState<Record<string, string>>({})
+    // Which layers have authored prose (changelog/index.json) — optional. Each
+    // layer's note (changelog/<N>.md) is fetched lazily as you select it.
+    const [proseLayers, setProseLayers] = useState<Set<number>>(new Set())
 
     useEffect(() => {
-        // optional — absent unless the consumer authored changelog notes
-        fetch('./changelog.json')
-            .then(r => (r.ok ? r.json() : {}))
-            .then((m: Record<string, string>) => setProse(m && typeof m === 'object' ? m : {}))
+        fetch('./changelog/index.json')
+            .then(r => (r.ok ? r.json() : []))
+            .then((ls: number[]) => setProseLayers(new Set(Array.isArray(ls) ? ls : [])))
             .catch(() => {})
     }, [])
 
     const [wrap, setWrap] = useState(false)
     const diff = useMemo(() => computeLayerDiff(spec, layer), [spec, layer])
-    const proseMd = prose[String(layer)]
+    const proseMd = useDoc(proseLayers.has(layer) ? `./changelog/${layer}.md` : undefined)
     const proseHtml = useMemo(() => (proseMd ? (marked.parse(proseMd) as string) : ''), [proseMd])
 
     return (

@@ -53,45 +53,65 @@ if (cmd === 'build') {
     writeFileSync(join(out, 'wire.json'), JSON.stringify(buildWireDefs(layers, prefix, protocol)))
 
     if (descriptions && existsSync(descriptions)) {
-        const map: Record<string, string> = {}
+        // Chunked: descriptions/index.json (names that have a doc) + descriptions/<name>.md.
+        // The studio fetches a symbol's .md only when its page opens (lazy).
+        const dir = join(out, 'descriptions')
+        mkdirSync(dir, { recursive: true })
+        const names: string[] = []
         for (const f of readdirSync(descriptions))
-            if (f.endsWith('.md')) map[f.slice(0, -3)] = readFileSync(join(descriptions, f), 'utf8')
-        writeFileSync(join(out, 'descriptions.json'), JSON.stringify(map))
+            if (f.endsWith('.md')) {
+                names.push(f.slice(0, -3))
+                writeFileSync(join(dir, f), readFileSync(join(descriptions, f), 'utf8'))
+            }
+        writeFileSync(join(dir, 'index.json'), JSON.stringify(names.sort()))
     }
 
     const scenarios = flag('scenarios')
     if (scenarios && existsSync(scenarios)) {
+        // Chunked: scenarios/index.json (slug/title/interactive) + scenarios/<slug>.md.
         // Walk subdirectories so guides can be organised in folders — the slug keeps
-        // the relative path (e.g. auth/login), which the studio groups into a tree.
-        const walk = (dir: string, base = ''): { slug: string; title: string; body: string }[] => {
-            const out2: { slug: string; title: string; body: string }[] = []
-            for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-                a.name.localeCompare(b.name),
-            )) {
+        // the relative path (e.g. auth/login), which the studio groups into a tree and
+        // mirrors as nested .md files. Bodies load on open, not bundled up front.
+        const dir = join(out, 'scenarios')
+        const index: { slug: string; title: string; interactive: boolean }[] = []
+        const walk = (src: string, base = ''): void => {
+            for (const e of readdirSync(src, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
                 const rel = base ? `${base}/${e.name}` : e.name
-                if (e.isDirectory()) out2.push(...walk(join(dir, e.name), rel))
+                if (e.isDirectory()) walk(join(src, e.name), rel)
                 else if (e.name.endsWith('.md')) {
-                    const body = readFileSync(join(dir, e.name), 'utf8')
+                    const body = readFileSync(join(src, e.name), 'utf8')
                     const h1 = /^#\s+(.+)$/m.exec(body)
                     const slug = rel.slice(0, -3)
-                    out2.push({ slug, title: h1 ? h1[1]!.trim() : slug, body })
+                    // "interactive" = embeds a ```scenario block → gets the play badge in the nav.
+                    index.push({ slug, title: h1 ? h1[1]!.trim() : slug, interactive: /```scenario\s*\n/.test(body) })
+                    const dest = join(dir, `${slug}.md`)
+                    mkdirSync(dirname(dest), { recursive: true })
+                    writeFileSync(dest, body)
                 }
             }
-            return out2
         }
-        writeFileSync(join(out, 'scenarios.json'), JSON.stringify(walk(scenarios)))
+        mkdirSync(dir, { recursive: true })
+        walk(scenarios)
+        writeFileSync(join(dir, 'index.json'), JSON.stringify(index))
     }
 
     // Optional authored changelog prose: changelog/<layer>.md → { "<layer>": md }.
     // The Changelog page shows the auto-diff regardless; this prose sits on top.
     const changelog = flag('changelog')
     if (changelog && existsSync(changelog)) {
-        const map: Record<string, string> = {}
+        // Chunked: changelog/index.json (layers with prose) + changelog/<N>.md (fetched
+        // lazily when that layer is selected).
+        const dir = join(out, 'changelog')
+        mkdirSync(dir, { recursive: true })
+        const proseLayers: number[] = []
         for (const f of readdirSync(changelog)) {
             const m = /^(\d+)\.md$/.exec(f)
-            if (m) map[m[1]!] = readFileSync(join(changelog, f), 'utf8')
+            if (m) {
+                proseLayers.push(Number(m[1]))
+                writeFileSync(join(dir, f), readFileSync(join(changelog, f), 'utf8'))
+            }
         }
-        writeFileSync(join(out, 'changelog.json'), JSON.stringify(map))
+        writeFileSync(join(dir, 'index.json'), JSON.stringify(proseLayers.sort((a, b) => a - b)))
     }
 
     // Optional baked connection defaults → config.json (the connbar seeds from it,

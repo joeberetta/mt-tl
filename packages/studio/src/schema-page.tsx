@@ -2,6 +2,7 @@ import { useContext, useMemo, useState, type CSSProperties } from 'react'
 import { Icon } from './icon.js'
 import { LayerCtx } from './layer-context.js'
 import { tlLine } from './doc-utils.js'
+import { shapeAt } from './spec-access.js'
 import { highlightTlLine } from './tl-highlight.js'
 import type { ApiSpec, SpecSymbol } from './spec-types.js'
 
@@ -45,7 +46,7 @@ export function SchemaPage({ spec }: { spec: ApiSpec }) {
         const src = kind === 'method' ? spec.methods : spec.constructors
         const byNs = new Map<string, Row[]>()
         for (const s of Object.values(src) as SpecSymbol[]) {
-            const shape = s.byLayer[layer]
+            const shape = shapeAt(s, layer)
             if (!shape) continue
             const row: Row = { name: s.name, kind, line: tlLine(s, shape), n: 0 }
             const ns = nsOf(s.name)

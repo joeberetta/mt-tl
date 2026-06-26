@@ -26,9 +26,11 @@ export { PROTOCOL_WRAPPERS, protocolDefNames } from './tools/protocol.js'
 export {
     buildApiSpec,
     buildWireDefs,
+    SPEC_VERSION,
     type ApiSpec,
     type SpecSymbol,
     type SpecShape,
+    type SpecShapeRun,
     type SpecParam,
     type SpecType,
 } from './spec.js'

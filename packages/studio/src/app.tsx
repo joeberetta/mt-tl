@@ -11,11 +11,11 @@ import { ChangelogPage } from './changelog-page.js'
 import { LayerCtx } from './layer-context.js'
 import { loadBuiltinRecipes } from './recipes.js'
 import { tlLine, typeUsage, paramDiff, type UsageRef } from './doc-utils.js'
+import { shapeAt, latestShape } from './spec-access.js'
+import { useDoc } from './doc-fetch.js'
 import { highlightTlLine } from './tl-highlight.js'
 import type { ApiSpec, SpecSymbol, SpecType, SpecShape, SpecParam, Scenario } from './spec-types.js'
 
-/** A guide is "interactive" if it embeds a ```scenario fenced block (B9). */
-const hasScenarioBlock = (body: string): boolean => /```scenario\s*\n/.test(body)
 /** Folder prefix of a guide slug (e.g. "auth/login" → "auth"; "intro" → "") (B10). */
 const folderOf = (slug: string): string => (slug.includes('/') ? slug.slice(0, slug.lastIndexOf('/')) : '')
 const leafOf = (slug: string): string => (slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug)
@@ -33,7 +33,9 @@ function useHash(): string {
 export function App() {
     const [spec, setSpec] = useState<ApiSpec | null>(null)
     const [scenarios, setScenarios] = useState<Scenario[]>([])
-    const [descriptions, setDescriptions] = useState<Record<string, string>>({})
+    // Names that have an authored description (descriptions/index.json) — the body
+    // of each is fetched lazily on its symbol page. Just a presence set here.
+    const [describedNames, setDescribedNames] = useState<Set<string>>(new Set())
     const [err, setErr] = useState<string>()
     const [layer, setLayerState] = useState(0)
     const route = useHash()
@@ -71,15 +73,18 @@ export function App() {
                 setLayerState(ul && s.layers.includes(ul) ? ul : s.latestLayer)
             })
             .catch(e => setErr(String(e)))
-        // Scenarios are optional — absent for a schema with no guides authored.
-        fetch('./scenarios.json')
+        // Scenarios are optional — absent for a schema with no guides authored. Only
+        // the lightweight index (slug/title/interactive) loads up front; each guide's
+        // Markdown body is fetched on open (ScenarioPage → useDoc).
+        fetch('./scenarios/index.json')
             .then(r => (r.ok ? r.json() : []))
             .then((s: Scenario[]) => setScenarios(Array.isArray(s) ? s : []))
             .catch(() => {})
         // Per-symbol descriptions (authored MD, bundled by `--descriptions`) — optional.
-        fetch('./descriptions.json')
-            .then(r => (r.ok ? r.json() : {}))
-            .then((d: Record<string, string>) => setDescriptions(d && typeof d === 'object' ? d : {}))
+        // Index is just the names that have a doc; each .md is fetched on its page.
+        fetch('./descriptions/index.json')
+            .then(r => (r.ok ? r.json() : []))
+            .then((names: string[]) => setDescribedNames(new Set(Array.isArray(names) ? names : [])))
             .catch(() => {})
     }, [])
 
@@ -93,7 +98,7 @@ export function App() {
                     <TopBar spec={spec} onToggleNav={() => setNavOpen(o => !o)} />
                     <ConnectionBar layer={layer} route={route} />
                     <SideNav spec={spec} scenarios={scenarios} route={route} />
-                    <Page spec={spec} scenarios={scenarios} route={route} descriptions={descriptions} />
+                    <Page spec={spec} scenarios={scenarios} route={route} describedNames={describedNames} />
                     <div className="nav-overlay" onClick={() => setNavOpen(false)} aria-hidden="true" />
                 </div>
                 <CommandPalette spec={spec} scenarios={scenarios} />
@@ -284,7 +289,7 @@ function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenari
         })
 
     const methodGroups = useMemo(
-        () => groupByNamespace(Object.values(spec.methods).filter(s => s.byLayer[layer] && match(s.name))),
+        () => groupByNamespace(Object.values(spec.methods).filter(s => shapeAt(s, layer) && match(s.name))),
         [spec, layer, ql],
     )
     const types = useMemo(
@@ -354,7 +359,7 @@ function SideNav({ spec, scenarios, route }: { spec: ApiSpec; scenarios: Scenari
                     folder ? `guides · ${folder}` : 'guides',
                     items.map(s => (
                         <NavLink key={s.slug} to={`/scenario/${s.slug}`} route={route}>
-                            {hasScenarioBlock(s.body) && (
+                            {s.interactive && (
                                 <Icon name="player-play" style={{ fontSize: 11, marginRight: 4, color: 'var(--accent)' }} />
                             )}
                             {folder ? leafOf(s.slug) : s.title}
@@ -404,20 +409,20 @@ function Page({
     spec,
     scenarios,
     route,
-    descriptions,
+    describedNames,
 }: {
     spec: ApiSpec
     scenarios: Scenario[]
     route: string
-    descriptions: Record<string, string>
+    describedNames: Set<string>
 }) {
     const path = route.split('?')[0]! // drop the hash query (used by schema deep-links)
     const [kind, ...rest] = path.replace(/^\//, '').split('/')
     const name = decodeURIComponent(rest.join('/'))
-    if (kind === 'method' && spec.methods[name]) return <SymbolPage spec={spec} sym={spec.methods[name]} desc={descriptions[name]} />
+    if (kind === 'method' && spec.methods[name]) return <SymbolPage spec={spec} sym={spec.methods[name]} hasDesc={describedNames.has(name)} />
     if (kind === 'constructor' && spec.constructors[name])
-        return <SymbolPage spec={spec} sym={spec.constructors[name]} desc={descriptions[name]} />
-    if (kind === 'type' && spec.types[name]) return <TypePage spec={spec} type={spec.types[name]} desc={descriptions[name]} />
+        return <SymbolPage spec={spec} sym={spec.constructors[name]} hasDesc={describedNames.has(name)} />
+    if (kind === 'type' && spec.types[name]) return <TypePage spec={spec} type={spec.types[name]} hasDesc={describedNames.has(name)} />
     if (kind === 'schema') return <SchemaPage spec={spec} />
     if (kind === 'changelog') return <ChangelogPage spec={spec} />
     if (kind === 'scenario') {
@@ -466,7 +471,7 @@ function Home({ spec, scenarios }: { spec: ApiSpec; scenarios: Scenario[] }) {
                     <div className="grid">
                         {scenarios.map(s => (
                             <a className="card" href={`#/scenario/${s.slug}`} key={s.slug}>
-                                {hasScenarioBlock(s.body) && (
+                                {s.interactive && (
                                     <Icon name="player-play" style={{ fontSize: 12, marginRight: 6, color: 'var(--accent)' }} />
                                 )}
                                 {s.title}
@@ -480,10 +485,11 @@ function Home({ spec, scenarios }: { spec: ApiSpec; scenarios: Scenario[] }) {
     )
 }
 
-function SymbolPage({ spec, sym, desc }: { spec: ApiSpec; sym: SpecSymbol; desc?: string }) {
+function SymbolPage({ spec, sym, hasDesc }: { spec: ApiSpec; sym: SpecSymbol; hasDesc: boolean }) {
     const { layer } = useContext(LayerCtx)
-    const shape = sym.byLayer[layer]
+    const shape = shapeAt(sym, layer)
     const presentHere = !!shape
+    const desc = useDoc(hasDesc ? `./descriptions/${sym.name}.md` : undefined)
     const descHtml = useMemo(() => (desc ? (marked.parse(desc) as string) : ''), [desc])
     return (
         <main className="content">
@@ -492,7 +498,7 @@ function SymbolPage({ spec, sym, desc }: { spec: ApiSpec; sym: SpecSymbol; desc?
                 <h1 className="mono">{sym.name}</h1>
                 {sym.removed && <span className="badge danger">removed in {sym.removedIn}</span>}
                 <span className="id" style={{ marginLeft: 'auto' }}>
-                    since {sym.sinceLayer} · id #{(shape ?? sym.latest).id}
+                    since {sym.sinceLayer} · id #{(shape ?? latestShape(sym)).id}
                 </span>
             </div>
 
@@ -527,16 +533,17 @@ function SymbolPage({ spec, sym, desc }: { spec: ApiSpec; sym: SpecSymbol; desc?
 
             <h2>Layer history</h2>
             <div>
-                {[...Object.values(sym.byLayer)]
-                    .sort((a, b) => b.layer - a.layer)
-                    .map(s => (
-                        <div className="hist-row" key={s.layer}>
+                {sym.shapes
+                    .map((run, i) => ({ run, i }))
+                    .sort((a, b) => b.run.from - a.run.from)
+                    .map(({ run, i }) => (
+                        <div className="hist-row" key={run.from}>
                             <span className="mono" style={{ color: 'var(--accent)', width: 36 }}>
-                                {s.layer}
+                                {run.from}
                             </span>
-                            <span className="id">#{s.id}</span>
+                            <span className="id">#{run.id}</span>
                             <span className="muted" style={{ marginLeft: 'auto' }}>
-                                {changeSummary(sym, s)}
+                                {runSummary(sym, i)}
                             </span>
                         </div>
                     ))}
@@ -552,23 +559,23 @@ function SymbolPage({ spec, sym, desc }: { spec: ApiSpec; sym: SpecSymbol; desc?
                 )}
             </div>
 
-            {Object.keys(sym.byLayer).length >= 2 && <DiffLayers sym={sym} />}
+            {sym.shapes.length >= 2 && <DiffLayers sym={sym} />}
         </main>
     )
 }
 
 function DiffLayers({ sym }: { sym: SpecSymbol }) {
-    const present = Object.keys(sym.byLayer)
-        .map(Number)
-        .sort((a, b) => a - b)
-    const [a, setA] = useState(present[0]!)
-    const [b, setB] = useState(present[present.length - 1]!)
-    const sa = sym.byLayer[a]
-    const sb = sym.byLayer[b]
+    // Pickable layers = the change points (where a new shape starts); diffing
+    // anything between two change points yields the same result anyway.
+    const points = sym.shapes.map(r => r.from)
+    const [a, setA] = useState(points[0]!)
+    const [b, setB] = useState(points[points.length - 1]!)
+    const sa = shapeAt(sym, a)
+    const sb = shapeAt(sym, b)
     const d = sa && sb ? paramDiff(sa, sb) : undefined
     const pick = (v: number, set: (n: number) => void) => (
         <select value={v} onChange={e => set(Number(e.target.value))}>
-            {present.map(l => (
+            {points.map(l => (
                 <option key={l} value={l}>
                     {l}
                 </option>
@@ -722,9 +729,10 @@ function LinkList({ items }: { items: UsageRef[] }) {
     )
 }
 
-function TypePage({ spec, type, desc }: { spec: ApiSpec; type: SpecType; desc?: string }) {
+function TypePage({ spec, type, hasDesc }: { spec: ApiSpec; type: SpecType; hasDesc: boolean }) {
     const { layer } = useContext(LayerCtx)
     const usage = useMemo(() => typeUsage(spec, type.name, layer), [spec, type.name, layer])
+    const desc = useDoc(hasDesc ? `./descriptions/${type.name}.md` : undefined)
     const descHtml = useMemo(() => (desc ? (marked.parse(desc) as string) : ''), [desc])
     return (
         <main className="content">
@@ -741,7 +749,7 @@ function TypePage({ spec, type, desc }: { spec: ApiSpec; type: SpecType; desc?: 
                     const c = spec.constructors[cn]
                     return (
                         <a className="card mono" href={`#/constructor/${cn}`} key={cn} style={c?.removed ? { textDecoration: 'line-through', opacity: 0.6 } : {}}>
-                            {cn} <span className="id">#{c?.latest.id}</span>
+                            {cn} <span className="id">#{c && latestShape(c).id}</span>
                             {c?.removed && <span className="chip removed" style={{ marginLeft: 8 }}>removed in {c.removedIn}</span>}
                         </a>
                     )
@@ -764,10 +772,12 @@ function TypePage({ spec, type, desc }: { spec: ApiSpec; type: SpecType; desc?: 
 }
 
 function ScenarioPage({ spec, scenario }: { spec: ApiSpec; scenario: Scenario }) {
-    const html = useMemo(() => renderScenarioHtml(scenario.body, spec), [scenario, spec])
+    // The guide body is fetched on open (scenarios/<slug>.md), not bundled up front.
+    const body = useDoc(`./scenarios/${scenario.slug}.md`)
+    const html = useMemo(() => renderScenarioHtml(body, spec), [body, spec])
     // A guide can embed a ```scenario fenced block (mt-tl-test YAML) — if present,
     // "open" pre-fills the builder with it (auth-arg values are blanked on import).
-    const scenarioYaml = useMemo(() => /```scenario\s*\n([\s\S]*?)```/.exec(scenario.body)?.[1], [scenario])
+    const scenarioYaml = useMemo(() => /```scenario\s*\n([\s\S]*?)```/.exec(body)?.[1], [body])
     return (
         <main className="content">
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
@@ -833,20 +843,20 @@ function groupByNamespace(syms: SpecSymbol[]): Map<string, SpecSymbol[]> {
     }
     return m
 }
-function changeSummary(sym: SpecSymbol, shape: SpecShape): string {
-    const ls = Object.keys(sym.byLayer)
-        .map(Number)
-        .sort((a, b) => a - b)
-    const i = ls.indexOf(shape.layer)
+/** One-line summary for the i-th change point: what changed vs the previous run. */
+function runSummary(sym: SpecSymbol, i: number): string {
     if (i <= 0) return 'introduced'
-    const prev = sym.byLayer[ls[i - 1]!]!
-    const cur = new Set(shape.params.map(p => p.name))
+    const prev = sym.shapes[i - 1]!
+    const cur = sym.shapes[i]!
+    // Same id across a presence gap — the symbol vanished then returned unchanged.
+    if (prev.id === cur.id) return 'reintroduced'
+    const curNames = new Set(cur.params.map(p => p.name))
     const before = new Set(prev.params.map(p => p.name))
-    const added = [...cur].filter(n => !before.has(n))
-    const removed = [...before].filter(n => !cur.has(n))
+    const added = [...curNames].filter(n => !before.has(n))
+    const removed = [...before].filter(n => !curNames.has(n))
     const parts: string[] = []
     if (added.length) parts.push('+ ' + added.join(', '))
     if (removed.length) parts.push('− ' + removed.join(', '))
-    if (!parts.length && prev.id !== shape.id) parts.push('id changed')
-    return parts.join(' · ') || 'no change'
+    if (!parts.length) parts.push('id changed') // consecutive runs always differ in id here
+    return parts.join(' · ')
 }

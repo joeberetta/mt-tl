@@ -17,6 +17,13 @@ export interface SpecShape {
     layer: number
     params: SpecParam[]
 }
+/** A distinct shape valid across a contiguous run of layers [from,to] (run-length-encoded). */
+export interface SpecShapeRun {
+    id: string
+    params: SpecParam[]
+    from: number
+    to: number
+}
 export interface SpecSymbol {
     name: string
     kind: 'method' | 'constructor'
@@ -25,8 +32,9 @@ export interface SpecSymbol {
     lastLayer: number
     removed: boolean
     removedIn?: number
-    latest: SpecShape
-    byLayer: Record<number, SpecShape>
+    /** Distinct shapes, run-length-encoded over the layers present, sorted by `from`.
+     *  Resolve "shape at layer L" with `shapeAt`, the latest shape with `latestShape` (./spec-access). */
+    shapes: SpecShapeRun[]
 }
 export interface SpecType {
     name: string
@@ -37,6 +45,8 @@ export interface SpecType {
     removedIn?: number
 }
 export interface ApiSpec {
+    /** Output format version (2 = run-length `shapes`). */
+    version: number
     layers: number[]
     latestLayer: number
     methods: Record<string, SpecSymbol>
@@ -44,9 +54,14 @@ export interface ApiSpec {
     types: Record<string, SpecType>
 }
 
-/** A prose scenario guide, authored as Markdown (scenarios/<slug>.md), rendered by the studio. */
+/**
+ * A scenario guide's metadata (from `scenarios/index.json`). The Markdown body is
+ * fetched lazily per slug (`scenarios/<slug>.md`) when the guide is opened — see
+ * doc-fetch.ts. `interactive` (computed at build time) drives the "play" badge in
+ * the nav/home without loading the body.
+ */
 export interface Scenario {
     slug: string
     title: string
-    body: string
+    interactive: boolean
 }
