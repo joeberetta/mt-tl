@@ -7,7 +7,7 @@
 //   - steps: invoke | expectUpdate | recipe (exactly one — testing's rule)
 //   - invoke: params, expect (a Matcher: `_` ctor + extra `path: value` fields) OR
 //     expectError ({ code?, message? }), capture, timeoutMs
-//   - expectUpdate: a Matcher (`_` ctor + extra `path: value` fields), timeoutMs
+//   - expectUpdate: a Matcher (`_` ctor + extra `path: value` fields), capture, timeoutMs
 //   - recipe: a named macro + `with` args
 //   - users: per-user layer + auth ({ recipe, with } | { steps: [...] } | anonymous)
 //   - top-level vars + target (url + schema/publicKey placeholders for CLI runs)
@@ -106,6 +106,20 @@ export function parsePairs(spec: string): Array<[string, string]> {
         .filter(([k, p]) => k && p)
 }
 
+/** Emit a `capture: { key: path, … }` flow fragment from the UI spec, or '' if none. */
+const captureFlow = (spec: string): string => {
+    const caps = parsePairs(spec)
+    return caps.length ? `capture: { ${caps.map(([k, p]) => `${k}: ${p}`).join(', ')} }` : ''
+}
+
+/** Parse a YAML `capture: { key: path }` map back into the `key = path, …` UI form. */
+const captureSpec = (raw: unknown): string =>
+    raw && typeof raw === 'object'
+        ? Object.entries(raw as Record<string, unknown>)
+              .map(([k, p]) => `${k} = ${String(p)}`)
+              .join(', ')
+        : ''
+
 const compactJson = (raw: string): string => {
     try {
         return JSON.stringify(JSON.parse(raw))
@@ -166,13 +180,15 @@ function stepFlow(st: Step, includeAs: boolean): string {
             const body = matchBody(st.expect, st.matchSpec)
             if (body.length) parts.push(`expect: { ${body.join(', ')} }`)
         }
-        const caps = parsePairs(st.capture)
-        if (caps.length) parts.push(`capture: { ${caps.map(([k, p]) => `${k}: ${p}`).join(', ')} }`)
+        const cf = captureFlow(st.capture)
+        if (cf) parts.push(cf)
         if (st.timeoutSec) parts.push(`timeoutMs: ${Number(st.timeoutSec) * 1000}`)
     } else {
         const body = matchBody(st.expect || 'TODO', st.matchSpec)
         parts.push(`expectUpdate: { ${body.join(', ')} }`)
         if (st.nonBlocking) parts.push(`nonBlocking: true`)
+        const cf = captureFlow(st.capture)
+        if (cf) parts.push(cf)
         if (st.timeoutSec) parts.push(`timeoutMs: ${Number(st.timeoutSec) * 1000}`)
     }
     return `{ ${parts.join(', ')} }`
@@ -234,6 +250,7 @@ function parseStep(raw: any, fallbackUser: string, nid: Nid): Step {
     } else if (raw?.expectUpdate !== undefined) {
         st.kind = 'expectUpdate'
         st.nonBlocking = !!raw.nonBlocking
+        st.capture = captureSpec(raw.capture)
         const m = raw.expectUpdate
         if (typeof m === 'string') {
             st.expect = m
@@ -265,11 +282,7 @@ function parseStep(raw: any, fallbackUser: string, nid: Nid): Step {
                     .join(', ')
             }
         }
-        if (raw?.capture && typeof raw.capture === 'object') {
-            st.capture = Object.entries(raw.capture as Record<string, unknown>)
-                .map(([k, p]) => `${k} = ${String(p)}`)
-                .join(', ')
-        }
+        st.capture = captureSpec(raw?.capture)
     }
     return st
 }

@@ -406,6 +406,7 @@ export function Builder({ spec, slug }: { spec: ApiSpec; slug?: string }) {
                     const u = await d.promise
                     setResults(p => ({ ...p, [d.st.id]: { status: 'ok', text: `got ${u._}`, detail: jsonView(u) } }))
                     line(`✓ ${d.tag}: update ${u._}`, 'ok')
+                    applyCaptures(d.st.capture, u, scope, line)
                 } catch (e) {
                     const { hint, detail } = updateTimeoutHint(d.s, d.st.expect)
                     const msg = (e instanceof Error ? e.message : String(e)) + hint
@@ -943,6 +944,13 @@ function StepCard({
                                 <input type="checkbox" checked={st.nonBlocking} onChange={e => patch(st.id, { nonBlocking: e.target.checked })} />
                                 non-blocking (check at the end, any order)
                             </label>
+                            <input
+                                value={st.capture}
+                                placeholder="capture: scopeKey = update.path, … — use later as ${scopeKey}"
+                                className="mono"
+                                onChange={e => patch(st.id, { capture: e.target.value })}
+                                style={{ width: '100%', marginTop: 6, fontSize: 12 }}
+                            />
                         </>
                     )}
                     {res && (
@@ -1019,6 +1027,16 @@ function matchAll(
     return { ok: true }
 }
 
+/** Capture `scopeKey = source.path, …` fields from a result OR a matched update
+ *  into the scope, referenceable later as `${scopeKey}`. Mirrors @mt-tl/testing's
+ *  `applyCaptures` — works for both `invoke` results and `expectUpdate` updates. */
+function applyCaptures(captureSpec: string, source: BObject, scope: Scope, line: (text: string) => void): void {
+    for (const [key, path] of parsePairs(captureSpec)) {
+        scope.set(key, getByPath(source, path))
+        line(`  captured ${key} = ${JSON.stringify(scope.get(key))}`)
+    }
+}
+
 async function runStep(
     st: Step,
     s: BrowserSession,
@@ -1028,13 +1046,8 @@ async function runStep(
     tag: string,
 ): Promise<void> {
     const set = (r: RunResult): void => setResults(p => ({ ...p, [st.id]: r }))
-    // capture result fields into the scope for later `${...}` references
-    const capture = (result: BObject): void => {
-        for (const [key, path] of parsePairs(st.capture)) {
-            scope.set(key, getByPath(result, path))
-            line(`  captured ${key} = ${JSON.stringify(scope.get(key))}`)
-        }
-    }
+    // capture result/update fields into the scope for later `${...}` references
+    const capture = (source: BObject): void => applyCaptures(st.capture, source, scope, line)
 
     if (st.kind === 'recipe') {
         if (!st.recipe) return
@@ -1065,6 +1078,7 @@ async function runStep(
             const u = await s.expectUpdate(pred, timeoutMs)
             set({ status: 'ok', text: `got ${u._}`, detail: jsonView(u) })
             line(`✓ ${tag}: update ${u._}`, 'ok')
+            capture(u)
         } catch (e) {
             // On timeout, surface what DID arrive (usually a wrapped update type).
             const { hint, detail } = updateTimeoutHint(s, st.expect)
